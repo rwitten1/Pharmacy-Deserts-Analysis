@@ -8,10 +8,11 @@
 ################################################################
 
 ## Steps:
-## 1. Load packages and pharmacy address data
-## 2. Read in shape files for all states
-## 3. Geocode pharmacy data
-## 4. Load map with pharmacy dots + census tract lines
+## 1. Load packages and data files needed
+## 2. Geocode pharmacy data (do this only once)
+## 3. Finalize dataset for each row = pharmacy
+## 4. Create dataset for each row = census tract <- resume here
+
 ## 5. Define low income (census variables)
 ## 6. Define low access
 ## 7. Define pharmacy deserts in table
@@ -20,6 +21,9 @@
 
 # 1111111111111111111111111111111111111111111111111111111111111111111111111
 # 1111111111111111111111111111111111111111111111111111111111111111111111111
+# Load packages and data files needed for analysis
+# 1111111111111111111111111111111111111111111111111111111111111111111111111
+
 # Load packages
   library(tidycensus) # interface with census API to pull data tables
   library(acs) # also use this to get data from census
@@ -69,30 +73,29 @@
            ruca_2 = `Secondary RUCA Code, 2010 (see errata)`) %>% 
     select(-`Tract Population, 2010`,-`Land Area (square miles), 2010`,-`Population Density (per square mile), 2010`)
 
-
-# 2222222222222222222222222222222222222222222222222222222222222222222222222
-# 2222222222222222222222222222222222222222222222222222222222222222222222222
 # Read in shape files. Do a cache = TRUE
-# use Tigris to read in shapefiles directly using Census API (no local files needed)
-counties_c <- tigris::counties(cb = TRUE, year = 2020)
-tract_c <- tigris::tracts(cb = TRUE, year = 2020) # default format is sf but can also set class = "sp" if needed. see help function for gg mapping
-groups_c <- tigris::block_groups(cb = TRUE, year = 2020)
+  # use Tigris to read in shapefiles directly using Census API (no local files needed)
+  counties_c <- tigris::counties(cb = TRUE, year = 2020)
+  tract_c <- tigris::tracts(cb = TRUE, year = 2020) # default format is sf but can also set class = "sp" if needed. see help function for gg mapping
+  groups_c <- tigris::block_groups(cb = TRUE, year = 2020)
 
-# 3333333333333333333333333333333333333333333333333333333333333333333333333
-# 3333333333333333333333333333333333333333333333333333333333333333333333333
+# 2222222222222222222222222222222222222222222222222222222222222222222222222
+# 2222222222222222222222222222222222222222222222222222222222222222222222222
+# Geocode pharmacy addresses (assign lat and lon)
+# 2222222222222222222222222222222222222222222222222222222222222222222222222
 # # DONT NEED TO DO THESE STEPS AGAIN -------------------------------------
 
 # # Merge NCPDP data tables
-#   pharmacy_df <- full_join(providerinfo_df, services_df, by = "NCPDP Provider ID")
+  # pharmacy_df <- full_join(providerinfo_df, services_df, by = "NCPDP Provider ID")
 # # Drop territories and pharmacies that are not community pharmacies:
-#   pharmbystate_df <- pharmacy_df %>% group_by(`Physical Address State`) %>% 
-#     dplyr::summarise(n_pharm = n()) %>% 
+#   pharmbystate_df <- pharmacy_df %>% group_by(`Physical Address State`) %>%
+#     dplyr::summarise(n_pharm = n()) %>%
 #     filter(!`Physical Address State` %in% c("PR", "GU", "VI", "MP", "NA")) # removing territories except DC. (PR 1041; GU 24; VI 20; MP 9).
-#   table(pharmacy_df$`Primary Provider Type Code`, useNA = "always") # get numbers of pharmacy by type 
+#   table(pharmacy_df$`Primary Provider Type Code`, useNA = "always") # get numbers of pharmacy by type
 #   pharmacy_df <- pharmacy_df %>% filter(`Primary Provider Type Code` == 1) # then filter to just include community pharmacies
-
-# Geocode all community pharmacies in 50 US states:
-#   # break into 2 chunks: 
+# 
+# # Geocode all community pharmacies in 50 US states:
+#   # break into 2 chunks:
 #   # need to be under 40k addresses in order to stay under GoogleAPI geocoding budget limit for the month
 #   pharmbystate_df1 <- pharmbystate_df[1:25,] # contains 31510 pharmacies
 #   pharmbystate_df2 <- pharmbystate_df[26:52,] %>% filter(!is.na(`Physical Address State`)) #contains 30549 pharmacies
@@ -145,13 +148,18 @@ groups_c <- tigris::block_groups(cb = TRUE, year = 2020)
 #   pharmgeo_df <- rbind(pharmacy_df1, pharmacy_df2)
 #   write.csv(pharmgeo_df, "pharmacy_geo.csv")
   # # ^^ DONT NEED TO DO THESE STEPS AGAIN -------------------------------------
-  
+
+# 3333333333333333333333333333333333333333333333333333333333333333333333333
+# 3333333333333333333333333333333333333333333333333333333333333333333333333
+# Finalize dataset for each row = pharmacy
+# 3333333333333333333333333333333333333333333333333333333333333333333333333
   # read in df with geocoding complete: work with this data from now on
-  pharmgeo_df <- read.csv("pharmacy_geo.csv") 
-  # crosstab columns, rename variables, drop unnecessary variables
+  pharmgeo_df <- read.csv("pharmacy_geo.csv")[,-1] 
+
+# Clean up names, classes, drop unnecessary columns
   pharmgeo_df2 <- pharmgeo_df %>% 
-    filter(Closed.Door.Facility.Indicator %in% "N", # removed 1156 closed door facilities here as well
-           Dispenser.Class.Code %in% "7") %>%       # removed 288 alternate dispensing sites as well
+    filter(Closed.Door.Facility.Indicator != "Y", # removed 1156 closed door facilities here as well
+           Dispenser.Class.Code != "7") %>%       # removed 288 alternate dispensing sites as well
     mutate(ID = as.character(ID.x),
            ncpdp_id = as.character(NCPDP.Provider.ID),
            legal_name = as.character(Legal.Business.Name),
@@ -232,34 +240,81 @@ groups_c <- tigris::block_groups(cb = TRUE, year = 2020)
            -State.Income.Tax.ID.Number, -Deactivation.Code, -Reinstatement.Code,
            -Reinstatement.Date, -Transaction.Code, -Transaction.Date, -ID.y) # Drop unnecessary columns
 
-  ############ STOPPED HERE ON Feb 8th. Make the old code more efficient with how I name dataframes.
-  # Assign each pharmacy to a census tract (by GEOID10)
-  ## transform pharmacy lat/long dataframe to SF object
-  mypoints_sf <- st_as_sf(pharmgeo_df2,
-                          coords = c("lon", "lat"),
-                          crs = 4326) # set with WSG84 which is what Google maps uses for geocoding
-  ## transform the pharmaddress SF to the same CRS as census data uses (NAD83 not WSG84)
-  mypoints_sf2 <- st_transform(mypoints_sf, crs = st_crs(tract_c))
-  ## check that they are identical
-  identical(st_crs(tract_c),st_crs(mypoints_sf2)) # output is TRUE
-  ### will use this mypoints_sf2 for mapping of points, as well as matching a pharmacy to a tract
-  ## add column for GEOID to original DF version of pharm_address
-  pharmgeo_df3 <- pharmgeo_df2
-  ## use st_intersects & apply function to assign each pharmacy point to a tract polygon
-  pharmgeo_df3$GEOID <- apply(st_intersects(tract_c, mypoints_sf2, sparse = FALSE), 2,
-                                function(col) {
-                                  tract_c[which(col),]$GEOID
-                                })
-  
-  # Group by census tract and count how many pharmacies there are per tract
-  
-#################
-### Read in census variables
-  
-  
+# Manually fill in the addresses missing lon and lat from geocoding
+  # Check the addresses with NA for lon and lat
+  # missingadddresses <- pharmgeo_df2 %>% 
+  #   filter(is.na(lat)) %>% 
+  #   select(addresses, lat, lon, dba_name, legal_name, ncpdp_id,
+  #          address1, address2, city, state, zip, county_fips)
+  # write.csv(missingadddresses, "missingaddresses1.csv")
+  # Manual step here: 
+    # look up the individual addresses for these 34 observationsin Google Maps
+    # add lat and lon to csv, read it back in
+    missingaddresses2 <- read.csv("missingaddresses1.csv")
+    missingaddresses2$latnew <- missingaddresses2$lat
+    missingaddresses2$lonnew <- missingaddresses2$lon
+    missingaddresses2$ncpdp_id <- as.character(missingaddresses2$ncpdp_id)
+    missingaddresses2 <- missingaddresses2 %>% select(ncpdp_id, latnew, lonnew)
+  # Add lat and lon to pharmgeo_df for the addresses we identified manually (should be 0 NA lat/lon remaining)
+    pharmgeo_df3 <- full_join(pharmgeo_df2, missingaddresses2, by = "ncpdp_id")
+    pharmgeo_df3$lon <- ifelse(is.na(pharmgeo_df3$lon), pharmgeo_df3$lonnew, pharmgeo_df3$lon)
+    pharmgeo_df3$lat <- ifelse(is.na(pharmgeo_df3$lat), pharmgeo_df3$latnew, pharmgeo_df3$lat)
+    pharmgeo_df3 <- pharmgeo_df3 %>% select(-lonnew, -latnew)
+  # Remove objects from our envt that we no longer need to maximize space/memory for the next step
+    # rm(result, providerinfo_df, pharmgeo_df, pharmgeo_df2, pharmacy_df, pharmacy_df1, pharmacy_df2, pharmacy_df2_2, test, missingadddresses, missingaddresses2)
+    
+    
+# Assign each pharmacy to a census tract (by GEOID10)
+  # transform pharmacy lat/long dataframe to SF object
+    mypoints_sf <- st_as_sf(pharmgeo_df3,
+                            coords = c("lon", "lat"),
+                            crs = 4326) # set with WSG84 which is what Google maps uses for geocoding
 
+  # transform the pharmaddress SF to the same CRS as census data uses (census is NAD83 not WSG84)
+    # will use this mypoints_sf2 for mapping of points, as well as matching a pharmacy to a tract
+    mypoints_sf2 <- st_transform(mypoints_sf, crs = st_crs(tract_c))
+    # check that they are identical
+    identical(st_crs(tract_c),st_crs(mypoints_sf2)) # output is TRUE
+
+  # Assign each pharmacy point to a tract polygon use st_intersects & apply function
+    # This function takes a lot of memory, need to do it in a loop state by state
+    pharmbystate <- pharmgeo_df3 %>% group_by(state) %>% dplyr::summarise(n_pharm = n()) # count of pharmacies by state
+    # Vector of state abbreviations
+    statelist <- pharmbystate$state
+    
+    # goal of loop = create a dataframe of just ncpdp ids and GEOID of the tract. Do Rbind by state. Then will join this df by ncpdp_id to pharmgeo3 to make the full dataset
+      # Create temporary storage dataframe to store output of each state loop
+      tempstorage <- data.frame()
+      # Note: loop takes about 2 minutes to run
+      for (state_i in statelist) {
+        # subset the pharmacy points and tracts to dfs of the state we are looping for
+        mypoints_sf2_temp <- mypoints_sf2 %>% filter(state %in% state_i)
+        tract_c_temp <- tract_c %>% filter(STUSPS %in% state_i)
+        # create an output df of the ncpdpd_id's for this state we are looping for
+        pharmgeo_df3_temp <- pharmgeo_df3 %>% filter(state %in% state_i) %>% select(ncpdp_id) 
+        # function to assing GEOID to each ncpdp_id
+        pharmgeo_df3_temp$GEOID <- as.character(base::apply(st_intersects(x = tract_c_temp, y = mypoints_sf2_temp, sparse = FALSE), 2,
+                                                            FUN = function(col) {
+                                                              tract_c_temp[which(col),]$GEOID
+                                                              }))
+        # bind the result of each iteration together as the consolidated output
+        tempstorage <-rbind(tempstorage,pharmgeo_df3_temp)
+      }
+    # Join result of loop (GEOIDs) to pharmgeo_df to get our main dataframe of pharmacies now with GEOID of tract
+    pharmgeo_df4 <- left_join(pharmgeo_df3, tempstorage, by = "ncpdp_id")
+    # save as a csv so don't have to run this loop every time
+    write.csv(pharmgeo_df4, "pharmgeo_df4.csv")
+    # pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
   
-  
-  # Define criteria for pharmacy deserts: urban/rural, income, etc.
-  
+    
+# 4444444444444444444444444444444444444444444444444444444444444444444444444
+# 4444444444444444444444444444444444444444444444444444444444444444444444444
+# Create dataset for each row = census tract
+# 4444444444444444444444444444444444444444444444444444444444444444444444444
+
+# Group pharmgeo by by GEOID for census tract, count number of pharmacies per census tract
+    # drop pharmacy-specific cols (can add these back in later if needed for proportion with services)
+    # group_by and summarize geoid for n_pharm
+ 
+# Read in census variables
   
