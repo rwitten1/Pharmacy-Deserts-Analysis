@@ -304,7 +304,7 @@
     pharmgeo_df4 <- left_join(pharmgeo_df3, tempstorage, by = "ncpdp_id")
     # save as a csv so don't have to run this loop every time
     write.csv(pharmgeo_df4, "pharmgeo_df4.csv")
-    # pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
+    pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
   
     
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
@@ -312,9 +312,149 @@
 # Create dataset for each row = census tract
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
 
-# Group pharmgeo by by GEOID for census tract, count number of pharmacies per census tract
-    # drop pharmacy-specific cols (can add these back in later if needed for proportion with services)
-    # group_by and summarize geoid for n_pharm
+
  
-# Read in census variables
+# Read in census variables (from: https://api.census.gov/data/2021/acs/acs5/variables.html)
+    census_vars <- c(
+        # population by age and gender
+        "B01001_001", "B01001_007", "B01001_008", "B01001_009", "B01001_010","B01001_011","B01001_012","B01001_013","B01001_014","B01001_015","B01001_016","B01001_017","B01001_018","B01001_019","B01001_020","B01001_021","B01001_022","B01001_023","B01001_024","B01001_025",
+        "B01001_031", "B01001_032", "B01001_033", "B01001_034","B01001_035","B01001_036","B01001_037","B01001_038","B01001_039","B01001_040","B01001_041","B01001_042","B01001_043","B01001_044","B01001_045","B01001_046","B01001_047","B01001_048","B01001_049",
+        # household income, below FPL, vehicle ownership:
+        "B19013_001E", "B17001_001E", "B17001_002E", "B17001_031E", "B08201_001E",
+        # education level: adults with a high school degree
+          "B15001_001", # total adult population for this question
+          "B15001_006", # male, high school graduate, aged 18-24
+          "B15001_014", # male, high school graduate, aged 25-34
+          "B15001_022", # male, high school graduate, aged 35-44
+          "B15001_030", # male, high school graduate, aged 45-64
+          "B15001_038", # male, high school graduate, aged 65+
+          "B15001_047", # female, high school graduate, aged 18-24
+          "B15001_055", # female, high school graduate, aged 25-34
+          "B15001_063", # female, high school graduate, aged 35-44
+          "B15001_071", # female, high school graduate, aged 45-64
+          "B15001_079", # female, high school graduate, aged 65+
+        # race and ethnicity combined 
+          "B03002_001", # total for this question: hispanic/latino by race
+          "B03002_003", # non-hispanic white
+          "B03002_004", # non-hispanic black
+          "B03002_005", # non-hispanic AIAN
+          "B03002_006", # non-hispanic Asian
+          "B03002_007", # non-hispanic NHPI
+          "B03002_008", # non-hispanic other race
+          "B03002_009", # non-hispanic 2+ races
+          "B03002_013", # hispanic white
+          "B03002_014", # hispanic black
+          "B03002_015", # hispanic AIAN
+          "B03002_016", # hispanic Asian
+          "B03002_017", # hispanic NHPI
+          "B03002_018", # hispanic other race
+          "B03002_019", # hispanic 2+ races
+        # health insurance
+          # any: coverage by sex by age:
+          "B27001_009", # total population: male 19-25
+          "B27001_012", # total population: male 26-34
+          "B27001_015", # total population: male 35-44
+          "B27001_018", # total population: male 45-54
+          "B27001_021", # total population: male 55-64
+          "B27001_024", # total population: male 65-74
+          "B27001_027", # total population: male 75+
+          "B27001_011", # has no health insurance coverage: male 19-25
+          "B27001_014", # has no health insurance coverage: male 26-34
+          "B27001_017", # has no health insurance coverage: male 35-44
+          "B27001_020", # has no health insurance coverage: male 45-54
+          "B27001_023", # has no health insurance coverage: male 55-64
+          "B27001_026", # has no health insurance coverage: male 65-74
+          "B27001_029", # has no health insurance coverage: male 75+
+          "B27003_010", # has public health insurance coverage: male 19-25
+          "B27003_013", # has public health insurance coverage: male 26-34
+          "B27003_016", # has public health insurance coverage: male 35-44
+          "B27003_019", # has public health insurance coverage: male 45-54
+          "B27003_022", # has public health insurance coverage: male 55-64
+          "B27003_025", # has public health insurance coverage: male 65-74
+          "B27003_028", # has public health insurance coverage: male 75+
+          "B27001_037", # total population: female 19-25
+          "B27001_040", # total population: female 26-34
+          "B27001_043", # total population: female 35-44
+          "B27001_046", # total population: female 45-54
+          "B27001_049", # total population: female 55-64
+          "B27001_052", # total population: female 65-74
+          "B27001_055", # total population: female 75+
+          "B27001_039", # has no health insurance coverage: female 19-25
+          "B27001_042", # has no health insurance coverage: female 26-34
+          "B27001_045", # has no health insurance coverage: female 35-44
+          "B27001_048", # has no health insurance coverage: female 45-54
+          "B27001_051", # has no health insurance coverage: female 55-64
+          "B27001_054", # has no health insurance coverage: female 65-74
+          "B27001_057", # has no health insurance coverage: female 75+
+          "B27003_038", # has public health insurance coverage: female 19-25
+          "B27003_041", # has public health insurance coverage: female 26-34
+          "B27003_044", # has public health insurance coverage: female 35-44
+          "B27003_047", # has public health insurance coverage: female 45-54
+          "B27003_050", # has public health insurance coverage: female 55-64
+          "B27003_053", # has public health insurance coverage: female 65-74
+          "B27003_056", # has public health insurance coverage: female 75+
+        # english-speaking
+          "B16004_024", # total adults age 18-64 years for this question
+          "B16004_046", # total adults age 65 and over for this question
+          "B16004_029", "B16004_030", # adults age 18-64 who speak english "not well" or "not at all"
+          "B16004_051", "B16004_052", # adults age 65+ who speak english "not well" or "not at all"
+        # physical disability status: sex by age by ambulatory difficulty
+          "B18105_001", # total adult population for this question
+          "B18105_005", "B18105_019", # total pop male and female age 5 - 17 (who we should subtract from the total)
+          "B18105_007", # male with ambulatory difficulty 18-34 years
+          "B18105_010", # male with ambulatory difficulty 35-64 years
+          "B18105_013", # male with ambulatory difficulty 65-74 years
+          "B18105_016", # male with ambulatory difficulty aged 75+
+          "B18105_023", # female with ambulatory difficulty 18-34 years
+          "B18105_026", # female with ambulatory difficulty 35-64 years
+          "B18105_029", # female with ambulatory difficulty 65-74 years
+          "B18105_032", # female with ambulatory difficulty aged 75+
+        # inequality
+          "B19083_001" # GINI Index of income inequality
+        )
+    
+    # call the census API to get table read in
+    censusdata <- tidycensus::get_acs(geography = "tract",        # gets read in with a GEOID field, so can merge with pharmacy points here
+                                      variables = census_vars,    # read in list of variables in the vector above, will read the estimate (E) and moe (M)
+                                      geometry = TRUE,            # if false, doesnt read in geometry col with lat/long
+                                      output = "wide",            # may need output = tidy if want to use ggplot for static maps later
+                                      year = 2021)                # using the 2021 ACS which is now available
+    
+    # create pharmacy desert variables
+    # TODO: add in all needed estiamtes calculations
+    # TODO: then use tidycensus to add up all the moe for each estimate as well: https://walker-data.com/census-r/wrangling-census-data-with-tidyverse-tools.html?q=error#calculating-group-wise-margins-of-error
+    # TODO: then put NA for tracts where MOE > estimates- investigate this more. Replace with county proportions or is that worse?
+    censusdata2 <- censusdata %>% rowwise() %>% 
+      mutate(pop_total = B01001_001E,
+             pop_adult = sum(c(B01001_007E,B01001_008E,B01001_009E,B01001_010E,B01001_011E,B01001_012E,B01001_013E,B01001_014E,B01001_015E,B01001_016E,B01001_017E,B01001_018E,B01001_019E,B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
+                               B01001_031E,B01001_032E,B01001_033E,B01001_034E,B01001_035E,B01001_036E,B01001_037E,B01001_038E,B01001_039E,B01001_040E,B01001_041E,B01001_042E,B01001_043E,B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E)),
+             pop_65up = sum(c(B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
+                              B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E))) %>% 
+      ungroup() %>% as.data.frame()
+    censusdata2$fpl_percent <- censusdata2$B17001_002E/censusdata2$B17001_001E*100
+    censusdata2$fpl_percent_bin <- ifelse(censusdata2$fpl_percent >= 20, 1, 0)
+    censusdata2$lowveh_bin <- ifelse(censusdata2$B08201_001E < 100, 1, 0)
+    censusdata2$med_income <- censusdata2$B19013_001E
+    
+    censusdata4 <- st_as_sf(censusdata2, # transform this to a geo for use in maps
+                            crs = 4269)
+    
+# After this we deal with pharmacies and census tracts
+    # Group pharmgeo by by GEOID for census tract, count number of pharmacies per census tract
+    # group by census tracts and count how many pharmacies there are
+    pharm_to_tract <- pharmgeo_df4 %>%
+      select(GEOID, ncpdp_id) %>%
+      group_by(GEOID) %>%
+      summarise(ph_per_tract = n()) %>%
+      arrange(desc(ph_per_tract))
+    pharm_to_tract <- as.data.frame(pharm_to_tract)
+    # 35,785 tracts have pharmacies, out of 84,414 tracts in the US total
+
+    # join pharmacies dataframe wo ruca codes and census dataframe
+
+# Can now calculate buffers around each pharmacy using urban/rural ID
+# Buffer creation, identify block groups in each radius
+
+    
+# last- create binary variables for low-income and low-access
   
