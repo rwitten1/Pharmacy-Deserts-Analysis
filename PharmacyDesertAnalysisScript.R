@@ -312,8 +312,6 @@
 # Create dataset for each row = census tract
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
 
-
- 
 # Read in census variables (from: https://api.census.gov/data/2021/acs/acs5/variables.html)
     census_vars <- c(
         # population by age and gender
@@ -350,7 +348,6 @@
           "B03002_018", # hispanic other race
           "B03002_019", # hispanic 2+ races
         # health insurance
-          # any: coverage by sex by age:
           "B27001_009", # total population: male 19-25
           "B27001_012", # total population: male 26-34
           "B27001_015", # total population: male 35-44
@@ -421,22 +418,68 @@
                                       year = 2021)                # using the 2021 ACS which is now available
     
     # create pharmacy desert variables
-    # TODO: add in all needed estiamtes calculations
     # TODO: then use tidycensus to add up all the moe for each estimate as well: https://walker-data.com/census-r/wrangling-census-data-with-tidyverse-tools.html?q=error#calculating-group-wise-margins-of-error
     # TODO: then put NA for tracts where MOE > estimates- investigate this more. Replace with county proportions or is that worse?
+    
+    # estimates: (test out second table for same calcs but with MOE? then evaluate if pop_adult_e > pop_adult_m ?)
     censusdata2 <- censusdata %>% rowwise() %>% 
       mutate(pop_total = B01001_001E,
              pop_adult = sum(c(B01001_007E,B01001_008E,B01001_009E,B01001_010E,B01001_011E,B01001_012E,B01001_013E,B01001_014E,B01001_015E,B01001_016E,B01001_017E,B01001_018E,B01001_019E,B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
                                B01001_031E,B01001_032E,B01001_033E,B01001_034E,B01001_035E,B01001_036E,B01001_037E,B01001_038E,B01001_039E,B01001_040E,B01001_041E,B01001_042E,B01001_043E,B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E)),
-             pop_65up = sum(c(B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
-                              B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E))) %>% 
+             pop_65up_n = sum(c(B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
+                              B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E)),
+             pop_65up_p = pop_65up_n/pop_total,
+             fpl_p = B17001_002E/B17001_001E, 
+             fpl_percent_bin = ifelse(fpl_p >= .2, 1, 0),
+             lowveh_bin = ifelse(B08201_001E < 100, 1, 0),
+             median_income = B19013_001E,
+             educ_hs_p = sum(c(B15001_006E, B15001_014E, B15001_022E, B15001_030E, B15001_038E, B15001_047E, B15001_055E, B15001_063E, B15001_071E, B15001_079E))/B15001_001E,
+             race_nh_white_p = B03002_003E/B03002_001E,
+             race_nh_black_p = B03002_004E/B03002_001E,
+             race_nh_aian_p = B03002_005E/B03002_001E,
+             race_nh_asian_p = B03002_006E/B03002_001E,
+             race_nh_nhpi_p = B03002_007E/B03002_001E,
+             race_nh_other_p = B03002_008E/B03002_001E,
+             race_nh_2p_p = B03002_009E/B03002_001E,
+             race_hisp_white_p = B03002_013E/B03002_001E,
+             race_hisp_black_p = B03002_014E/B03002_001E,
+             race_hisp_aian_p = B03002_015E/B03002_001E,
+             race_hisp_asian_p = B03002_016E/B03002_001E,
+             race_hisp_nhpi_p = B03002_017E/B03002_001E,
+             race_hisp_other_p = B03002_018E/B03002_001E,
+             race_hisp_2p_p = B03002_019E/B03002_001E,
+             ins_popadult = sum(c(B27001_009E, B27001_012E, B27001_015E,B27001_018E,B27001_021E, B27001_024E,B27001_027E, B27001_037E,B27001_040E,B27001_043E,B27001_046E,B27001_049E,B27001_052E,B27001_055E)),
+             ins_none_p = sum(c(B27001_011E,B27001_014E, B27001_017E,B27001_020E,B27001_023E,B27001_026E,B27001_029E,B27001_039E,B27001_042E,B27001_045E,B27001_048E,B27001_051E,B27001_054E,B27001_057E))/ins_popadult,
+             ins_public_p = sum(c(B27003_010E,B27003_013E,B27003_016E, B27003_019E,B27003_022E,B27003_025E,B27003_028E,B27003_038E,B27003_041E,B27003_044E, B27003_047E,B27003_050E,B27003_053E,B27003_056E))/ins_popadult,
+             notenglspeak_p = sum(c(B16004_029E, B16004_030E, B16004_051E, B16004_052E))/sum(c(B16004_024E,B16004_046E)),
+             disability_p = sum(c(B18105_007E,B18105_010E,B18105_013E,B18105_016E,B18105_023E,B18105_026E,B18105_029E,B18105_032E))/(B18105_001E - sum(B18105_005E, B18105_019E)),
+             inequality_gini = B19083_001E,
+             ) %>% 
       ungroup() %>% as.data.frame()
-    censusdata2$fpl_percent <- censusdata2$B17001_002E/censusdata2$B17001_001E*100
-    censusdata2$fpl_percent_bin <- ifelse(censusdata2$fpl_percent >= 20, 1, 0)
-    censusdata2$lowveh_bin <- ifelse(censusdata2$B08201_001E < 100, 1, 0)
-    censusdata2$med_income <- censusdata2$B19013_001E
     
-    censusdata4 <- st_as_sf(censusdata2, # transform this to a geo for use in maps
+    
+    # Get income of nearest metro area ( # TODO what do if rural? put NA because there is no nearby metro area. Get list of metro areas)
+    income_county <- tidycensus::get_acs(geography = "county",                # gets read in with a GEOID field, so can merge with pharmacy points here
+                                         variables = "B19013_001E",           # median income
+                                         geometry = FALSE,                    # if false, doesnt read in geometry col with lat/long
+                                         output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
+                                         year = 2021)                         # use 2021 ACS
+    
+    # Merge with RUCA data and define urban, suburban, rural tracts
+    rucadf$GEOID <- as.character(rucadf$GEOID)
+    mydata_sf <- full_join(censusdata2, rucadf, by = "GEOID") %>% 
+      mutate(urbanicity = case_when(Primary.RUCA.Code.2010 %in% c(1,2,3) ~ 1,       # urban
+                                    Primary.RUCA.Code.2010 %in% c(4,5) ~ 2,         # suburban
+                                    Primary.RUCA.Code.2010 %in% c(6,7,8,9,10) ~ 3,  # rural
+                                    Primary.RUCA.Code.2010 %in% "99" ~ NA),         # no population / not evaluated
+             access_radius = case_when(urbanicity = 1 ~ 1,
+                                       urbanicity = 2 ~ 5,
+                                       urbanicity = 3 ~ 10,
+                                       urbanicity = NA ~ NA,
+                                       lowvehbin = 1 ~ 0.5)) # TODO check that this goes in order such that lowvehbin is the last thing defined
+    
+    # put this back as a geo for use in mapping
+    censusdata4 <- st_as_sf(mydatasf, # transform this to a geo for use in maps
                             crs = 4269)
     
 # After this we deal with pharmacies and census tracts
@@ -451,10 +494,142 @@
     # 35,785 tracts have pharmacies, out of 84,414 tracts in the US total
 
     # join pharmacies dataframe wo ruca codes and census dataframe
-
-# Can now calculate buffers around each pharmacy using urban/rural ID
-# Buffer creation, identify block groups in each radius
-
     
-# last- create binary variables for low-income and low-access
+
+# Back to the pharmacy dataset: take the pharmacy dataset and add the urban/rural radius information to it so we can calculate the buffers
+    
+    # Define the buffers
+    radius_km <- swfscMisc::convert.distance(c(0.5, 1, 5, 10), from = c("mi"), to = c("km"))
+    radius_km*1000
+    
+    buffers <- st_transform(pharmgeo_df4, crs = 3857) #transform to a different projection that uses meters as unit of distance
+    buffers_0.5mi <- buffers %>% filter(access_radius == 0.5) %>% st_buffer(dist = 804.672) #804.672 is 0.5 mile in meters, as calculated in line 500 above
+    buffers_1mi <- buffers %>% filter(access_radius == 1) %>% st_buffer(dist = 1609.344) #1609.34 is 1 mile in meters
+    buffers_5mi <- buffers %>% filter(access_radius == 5) %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
+    buffers_10mi <- buffers %>% filter(access_radius == 10) %>% st_buffer(dist = 16093.440) #10mi in meters
+    buffers2 <- rbind(buffers_0.5mi, buffers_1mi, buffers_5mi, buffers_10mi)
+    buffers2 <- st_transform(buffers2, crs = 4326) # transform back to wsg84 to use with leaflet
+    
+    groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # just make sure the census block group polys are same crs as the buffer df
+    centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the centroids of each block
+    centroidsgroups$inbuffer_bin <- st_within(centroidsgroups, buffers2) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+
+    # Get the populations of each block group -- Likely will have to make this into a loop
+    groupspop <- tidycensus::get_acs(geography = "block group",   # gets read in with a GEOID field, so can merge with pharmacy points here
+                                     variables = census_vars,
+                                     geometry = TRUE, # if false, doesnt read in geometry col with lat/long
+                                     output = "wide") 
+    
+    groups_join <- full_join(groupspop, as.data.frame(centroidsgroups), by = "GEOID")
+    groups_join2 <- groups_join %>% rowwise() %>% 
+      mutate(pop_total = B01001_001E,
+             pop_adult = sum(c(B01001_007E,B01001_008E,B01001_009E,B01001_010E,B01001_011E,B01001_012E,B01001_013E,B01001_014E,B01001_015E,B01001_016E,B01001_017E,B01001_018E,B01001_019E,B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
+                               B01001_031E,B01001_032E,B01001_033E,B01001_034E,B01001_035E,B01001_036E,B01001_037E,B01001_038E,B01001_039E,B01001_040E,B01001_041E,B01001_042E,B01001_043E,B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E)),
+             pop_65up = sum(c(B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
+                              B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E))) %>% 
+      ungroup() %>% as.data.frame() %>% 
+      dplyr::select(GEOID, NAME, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer_bin, pop_total, pop_adult, pop_65up)
+    
+    # column for the population of each block group whose centroid is in a pharmacy buffer:
+    groups_join2$in_pop <- ifelse(groups_join2$inbuffer_bin == TRUE, groups_join2$pop_adult, 0)
+    
+    groups_join2$GEOID10 <- substr(groups_join2$GEOID, 1, 11)
+    groups_join3 <- groups_join2 %>% group_by(GEOID10) %>% summarise(in_pop_total = sum(in_pop)) %>% 
+      mutate(GEOID = GEOID10) %>% select(GEOID, in_pop_total) 
+    
+    datafull <- full_join(mydata_sf, groups_join3, by = "GEOID") # TODO make sure here I'm joining with the census / full remaining data
+    
+    # create final variables for low-access
+    datafull$in_pop_percent <- datafull$in_pop_total/datafull$pop_adult
+    datafull$in_pop_percent_flag <- ifelse(datafull$in_pop_percent <0.667 | datafull$in_pop_total < 500, 1, 0)
+    
+    # Do final cleaning and dropping of columns
+    # Create pharmacy desert definition: low-income and low-access
+    datafull$pharmacydesert <- ifelse(datafull$lowincome_bin == 1 & datafull$in_pop_percent_flag == 1, 1, 0)
+
+###################################################################
+###################################################################
+# Statistical analyses and tables
+###################################################################
+
+# Create summary tables per supplement in long proposal
+    
+
+# Do statistical analyses: add to MS word tables
+    # Dont forget which correction I'll be doing
+    
+    
+    
+    
+    
+###################################################################
+###################################################################
+# Maps and visualizations
+###################################################################   
+# map check for just WA to check what these new proportions and urbanicities look like by census tract:
+# should eventually output a map of what was defined as urban / suburban / rural / lowveh nationally in supplemental materials?
+popup1 <- paste0(str_extract(mydata_sf$legal_name, "^([^,]*)")) # check that these names and characters are right
+map_ur_WA <- leaflet(width = "100%") %>%                     # sets the width of the map
+  addProviderTiles(provider = "CartoDB.Positron") %>%        # TODO remind myself what this does
+  addPolygons(data = states_c %>% 
+                filter(state = WA) %>% 
+                st_transform(crs = "+proj=longlat +datum=WGS84"),
+              fillOpacity = 0,
+              stroke = TRUE,
+              color = "black",
+              weight = 1.5) %>% 
+  addPolygons(data = counties_c %>%
+                filter(state = WA) %>%                       # filter to just WA on each of these to do quick test but then remove
+                st_transform(crs = "+proj=longlat +datum=WGS84"), # put my data on WSG84 CRS for mapping in open street maps
+              fillOpacity = 0,
+              stroke = TRUE,
+              color = "black",
+              weight = 1) %>% 
+  addPolygons(data = tract_c %>% dplyr::filter(state = WA) %>% 
+                st_transform(crs = "+proj=longlat +datum=WGS84"),
+              fillOpacity = 0,
+              stroke = TRUE,
+              color = "black",
+              weight = 0.5) %>% 
+  addPolygons(data = mydata_sf %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84") %>%  # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+                filter(accessradius == 0.5), #
+              popup = popup4,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7, 
+              color = "darkred") %>% 
+  addPolygons(data = mydata_sf %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84") %>%  # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+                filter(accessradius == 1), #
+              popup = popup4,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7, 
+              color = "blue2") %>% 
+  addPolygons(data = mydata_sf %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84") %>%  # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+                filter(accessradius == 5), #
+              popup = popup4,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7, 
+              color = "green4") %>% 
+  addPolygons(data = mydata_sf %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84") %>%  # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+                filter(accessradius == 10), #
+              popup = popup4,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7, 
+              color = "gold2") %>% 
+  addPolygons(data = mydata_sf %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84") %>%  # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+                filter(is.na(accessradius)), #
+              popup = popup4,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7, 
+              color = "gray66")
+
   
