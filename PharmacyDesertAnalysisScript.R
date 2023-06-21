@@ -64,7 +64,7 @@
   providerinfo_df <- readxl::read_excel(paste0(inputDir,"Provider Information Table.xlsx"))
   services_df <- readxl::read_excel(paste0(inputDir,"Services Information Table.xlsx"))
 # RUCA codes from USDA https://www.ers.usda.gov/data-products/rural-urban-commuting-area-codes.aspx . 
-  # As of Dec 2022 only 2010 RUCA codes are available- check again in a few months
+  # As of June 2023 only 2010 RUCA codes are available- 2020 RUCAs will be available in Dec 2023 at earliest
   ruca_df <- readxl::read_excel(paste0(inputDir,"ruca2010revised.xlsx"), sheet = 1, skip = 1) %>% 
     rename(county_FIPS = `State-County FIPS Code`,
            state = `Select State`,
@@ -72,6 +72,8 @@
            ruca_1 = `Primary RUCA Code 2010`,
            ruca_2 = `Secondary RUCA Code, 2010 (see errata)`) %>% 
     select(-`Tract Population, 2010`,-`Land Area (square miles), 2010`,-`Population Density (per square mile), 2010`)
+# County to MSA crosswalk: Needed for median income thresholds
+  cty_msa_df <- read_csv(paste0(inputDir,"cty_cbsa_msa_list.csv")) # from March 2020 https://www.census.gov/geographies/reference-files/time-series/demo/metro-micro/delineation-files.html 
 
 # Read in shape files. Do a cache = TRUE
   # use Tigris to read in shapefiles directly using Census API (no local files needed)
@@ -459,13 +461,72 @@
     
     
     # Get income of nearest metro area ( # TODO what do if rural? put NA because there is no nearby metro area. Get list of metro areas)
-    income_county <- tidycensus::get_acs(geography = "county",                # gets read in with a GEOID field, so can merge with pharmacy points here
-                                         variables = "B19013_001E",           # median income
-                                         geometry = FALSE,                    # if false, doesnt read in geometry col with lat/long
-                                         output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
-                                         year = 2021)                         # use 2021 ACS
+    fipscodes <- tidycensus::fips_codes # list of state and county names and fips codes
+    mystates <- fipscodes$state_code %>% unique()
     
-    # Merge with RUCA data and define urban, suburban, rural tracts
+    # get median income for each tract, too big to call at once so need to do loop
+    income_tract <- data.frame() # note the loop takes about 2 mins to run
+    for (state_i in mystates) {
+      # get the median incomes by tract in each state and store it in a temporary dataframe
+      income_tract_temp <- tidycensus::get_acs(geography = "tract",                 # gets read in with a GEOID field, so can merge with pharmacy points here
+                                               variables = "B19013_001E",           # median income
+                                               state = state_i,                    # list of all states
+                                               geometry = FALSE,                    # if false, doesnt read in geometry col with lat/long
+                                               output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
+                                               year = 2021,
+                                               survey = "acs5")   
+      # bind the result of each iteration together as the consolidated output
+      income_tract <-rbind(tempstorage,income_tract_temp)
+    }
+    # median household income of each MSA
+    income_msa <- tidycensus::get_acs(geography = "cbsa",
+                                      variables = "B19013_001",
+                                      year = 2021,
+                                      survey = "acs5")
+    income_msa$msa_id <- income_msa$GEOID
+    # median household income of each state
+    income_state <- tidycensus::get_acs(geography = "state",
+                                        variables = "B19013_001",
+                                        year = 2021,
+                                        survey = "acs5") %>% 
+      rename(GEOID_state = GEOID)
+    
+    # extract FIPS of each census tract ID to get county (first 5 digits of GEOID)
+    income_tract$county_fips <- str_sub(income_tract$GEOID, 1, 5)
+    # map counties to MSAs
+    cty_msa_df$county_fips <- paste0(cty_msa_df$`FIPS State Code`, cty_msa_df$`FIPS County Code`)
+    cty_msa_df$msa_id <- cty_msa_df$`CBSA Code`
+    tempdf <- full_join(income_tract, cty_msa_df, by = "county_fips")
+    tempdf2 <- full_join(testdf, income_msa, by = "msa_id") %>% 
+      rename(GEOID_tract = GEOID.x,
+             tract_name = NAME.x,
+             med_income_tract = B19013_001E,
+             med_income_tract_moe = B19013_001M,
+             med_income_msa = estimate,
+             med_income_msa_moe = moe,
+             GEOID_state = `FIPS State Code`) %>% 
+      select(-`Metropolitan Division Code`,-`Metropolitan Division Title`,-GEOID.y, -NAME.y)
+    incomedata_df <- full_join(tempdf2, income_state, by = "GEOID_state") %>% 
+      rename(med_income_state = estimate,
+             med_income_state_moe = moe) %>% 
+      select(-NAME,-variable.y)
+    rm(tempdf, tempdf2)
+    # create column for: if a tract is in an MSA, use the MSA income. If not in an MSA, use the state median household income
+    incomedata_df$median_income_threshold <- NA
+    incomedata_df$median_income_threshold <- ifelse(!is.na(incomedata_df$med_income_msa), incomedata_df$med_income_msa, NA)
+    incomedata_df$median_income_threshold <- ifelse(is.na(incomedata_df$med_income_msa), incomedata_df$med_income_state, incomedata_df$median_income_threshold)
+    # what are the NAs
+    check <- incomedata_df %>% filter(is.na(median_income_threshold))
+    
+    # check any NAs!
+    summary(incomedata_df$median_income_threshold)
+    # then make flag
+    incomedata_df$low_income_medincome_flag <- ifelse(med_income_tract < 0.8*median_income_threshold, 1, 0)
+    # merge it back with the rest of the census tract level data
+    dfformerge <- incomedata_df %>% select() # keep the tract and county income cols plus the states and fips if we dont have those already in the the census data
+    
+    
+    # Merge the census tract data with RUCA data and define urban, suburban, rural tracts. Ruca 2020 codes not available until December 2023 at earliest: https://www.ers.usda.gov/data-products/rural-urban-commuting-area-codes.aspx
     rucadf$GEOID <- as.character(rucadf$GEOID)
     mydata_sf <- full_join(censusdata2, rucadf, by = "GEOID") %>% 
       mutate(urbanicity = case_when(Primary.RUCA.Code.2010 %in% c(1,2,3) ~ 1,       # urban
