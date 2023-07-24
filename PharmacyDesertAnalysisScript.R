@@ -315,10 +315,14 @@
     write.csv(pharmgeo_df4, "pharmgeo_df4.csv")
     pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
     
+    View(pharmgeo_df4)
+    
+    
+    
     # when read it back in, convert to sf type not df
     pharmgeo_df5 <- st_as_sf(pharmgeo_df4,
                             coords = c("lon", "lat"),
-                            crs = 4326) # 
+                            crs = 4326) # wgs84 this is the google maps geocode
   
     
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
@@ -626,26 +630,25 @@
   censusdata6$ph_per_65pop <- censusdata6$ph_per_tract/censusdata6$pop_65up_n*1000
   
   write.csv(as.data.frame(censusdata6 %>% select(-geometry)), "censusdata6.csv")
-  
   # clear old dfs for space
   # rm(censusdata, censusdata2, censusdata3, censusdata4, censusdata_temp, cty_msa_df, income_state, income_tract, incomedata_df, income_tract_temp, nopop, providerinfo_df, services_df, test, test2, tract_2021, tract_2021_temp, tract_2021_geo, dfformerge1, income_msa, pharmgeo_df, pharmgeo_df2)
  
   # put this back as a geo for use in mapping
   censusdata7 <- st_as_sf(censusdata6, # transform this to a geo for use in maps
-                          crs = 4269)
+                          crs = 4269) # NAD83 which is what census uses (bc that's what our polygons on this df are from)
   class(censusdata7)
-  
-  test2 <- censusdata4 %>% filter(GEOID_tract %in% "01125012001")
-  
 
 # Back to the pharmacy dataset: take the pharmacy dataset and add the urban/rural radius information to it so we can calculate the buffers
   # add rural/urban status by GEOID to each pharmacy
   ruralurbankey <- censusdata6 %>% select(GEOID_tract, urbanicity, accessradius) %>% unique() %>% rename(GEOID = GEOID_tract)
-  pharmgeo_df6 <- left_join(pharmgeo_df5, ruralurbankey, by = "GEOID")
+  pharmgeo_df6 <- left_join(pharmgeo_df5, ruralurbankey, by = "GEOID") # pharmgeodf5 is in crs = 4326 =  wgs84 this is the google maps geocode
+  
+  # There are 25 pharmacies not assigned a GEOID. Come back to these later to manually add them in if time.
   test <- pharmgeo_df6 %>% filter(is.na(accessradius))
-  # These 26 pharmacies were not assigned a GEOID. Add manually:
+  # These 25 pharmacies were not assigned a GEOID. Add manually (then move back up above). so note that the lat/lon in here are for google maps, transform this before using census's geocoder.
+  missinggeos <- st_transform(pharmgeo_df6, crs = 4269) %>% filter(is.na(accessradius))# transform it to census crs
+  write.csv(missinggeos, "missingpharmgeos2.csv") # use these lat/long to put into census geocoder and add GEOIDs manually 
 
-    
   
   # Define the buffers
   radius_km <- swfscMisc::convert.distance(c(0.5, 1, 5, 10), from = c("mi"), to = c("km"))
@@ -657,27 +660,31 @@
   buffers_5mi <- buffers %>% filter(accessradius == 5) %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
   buffers_10mi <- buffers %>% filter(accessradius == 10) %>% st_buffer(dist = 16093.440) #10mi in meters
   buffers2 <- rbind(buffers_0.5mi, buffers_1mi, buffers_5mi, buffers_10mi)
-  buffers2 <- st_transform(buffers2, crs = 4326) # transform back to wsg84 to use with leaflet
+  buffers2 <- st_transform(buffers2, crs = 4326) # transform back to wsg84 / google maps version to use with leaflet
   
   groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # just make sure the census block group polys are same crs as the buffer df
-  centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the centroids of each block
+  centroidsgroups <- st_centroid(groups_c_trans %>% filter(!STATEFP %in% c(60, 66,69,72,78))) # create a df of the points that are the centroids of each block, filter out the territories
   centroidsgroups$inbuffer_bin <- st_within(centroidsgroups, buffers2) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
 
-  # Get the populations of each block group -- Likely will have to make this into a loop
-  groupspop <- tidycensus::get_acs(geography = "block group",   # gets read in with a GEOID field, so can merge with pharmacy points here
-                                   variables = census_vars,     # just need censuspopvars here
-                                   geometry = TRUE, # if false, doesnt read in geometry col with lat/long
-                                   output = "wide") 
+  groupspop <- data.frame() # note the loop takes about 2 mins to run
+  for (state_i in mystates) {
+    # get the median incomes by tract in each state and store it in a temporary dataframe
+    groupspop_temp <- tidycensus::get_acs(geography = "block group",                 # gets read in with a GEOID field, so can merge with pharmacy points here
+                                           variables = "B01001_001E",           # total population
+                                           state = state_i,                     # list of all states
+                                           geometry = TRUE,                    # if false, doesnt read in geometry col with lat/long
+                                           output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
+                                           year = 2021,
+                                           survey = "acs5")   
+    # bind the result of each iteration together as the consolidated output
+    groupspop <-rbind(groupspop,groupspop_temp)
+  }
     
-    groups_join <- full_join(groupspop, as.data.frame(centroidsgroups), by = "GEOID")
+    groups_join <- full_join(groupspop, as.data.frame(centroidsgroups), by = "GEOID") # drop ~400 of these bc they are block groups wiht no pop are 100% water
     groups_join2 <- groups_join %>% rowwise() %>% 
-      mutate(pop_total = B01001_001E,
-             pop_adult = sum(c(B01001_007E,B01001_008E,B01001_009E,B01001_010E,B01001_011E,B01001_012E,B01001_013E,B01001_014E,B01001_015E,B01001_016E,B01001_017E,B01001_018E,B01001_019E,B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
-                               B01001_031E,B01001_032E,B01001_033E,B01001_034E,B01001_035E,B01001_036E,B01001_037E,B01001_038E,B01001_039E,B01001_040E,B01001_041E,B01001_042E,B01001_043E,B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E)),
-             pop_65up = sum(c(B01001_020E,B01001_021E,B01001_022E,B01001_023E,B01001_024E,B01001_025E,
-                              B01001_044E,B01001_045E,B01001_046E,B01001_047E,B01001_048E,B01001_049E))) %>% 
+      mutate(pop_total = B01001_001E) %>% 
       ungroup() %>% as.data.frame() %>% 
-      dplyr::select(GEOID, NAME, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer_bin, pop_total, pop_adult, pop_65up)
+      dplyr::select(GEOID, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer_bin, pop_total)
     
     # column for the population of each block group whose centroid is in a pharmacy buffer:
     groups_join2$in_pop <- ifelse(groups_join2$inbuffer_bin == TRUE, groups_join2$pop_adult, 0)
