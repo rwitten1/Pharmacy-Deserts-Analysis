@@ -25,6 +25,7 @@
 
 # Load packages
   library(tidycensus) # interface with census API to pull data tables
+  library(censusapi) # use to get decennial data
   library(acs) # also use this to get data from census
   library(tidyverse) # data manipulation
   library(ggmap) # maps using the tidyverse
@@ -41,13 +42,14 @@
   library(htmlwidgets) # save interactive leaflet maps as html
   library(shiny) # make interactive html site
   library(RColorBrewer) # for R color scales in ggplot and leaflet
+  library(table1) # make summary data tables
 # Install Census and API keys
   # # install census API key (only need to do this once per computer ever)
-  # my_api_key <- "083ae7aa6363d62361c694445ce61298cd1c2825"
-  # census_api_key(my_api_key, install = TRUE)
-  Sys.getenv("CENSUS_API_KEY") # to check if the api key is loaded
+  my_api_key <- "083ae7aa6363d62361c694445ce61298cd1c2825"
+  # # census_api_key(my_api_key, install = TRUE)
+  # Sys.getenv("CENSUS_API_KEY") # to check if the api key is loaded
   # # install Google API key (new key for this proj vs my old one)
-  register_google(key = "AIzaSyCHb9LTmOgEswBpLGgEt594kIua5NQLxKo", write = TRUE)
+  # register_google(key = "AIzaSyCHb9LTmOgEswBpLGgEt594kIua5NQLxKo", write = TRUE)
 
 # Set working drive and files
   rootDir <- "~/OneDrive/Documents/School Stuff/Dissertation/Pharmacy-Deserts-Analysis/"
@@ -60,41 +62,46 @@
 
 # Load files needed:
 # NCPDP files: provider info and services
-  providerinfo_df <- readxl::read_excel(paste0(inputDir,"Provider Information Table.xlsx"))
-  services_df <- readxl::read_excel(paste0(inputDir,"Services Information Table.xlsx"))
-# RUCA codes from USDA https://www.ers.usda.gov/data-products/rural-urban-commuting-area-codes.aspx . 
-  # # As of June 2023 only 2010 RUCA codes are available- 2020 RUCAs will be available in Dec 2023 at earliest
-  # ruca_df <- readxl::read_excel(paste0(inputDir,"ruca2010revised.xlsx"), sheet = 1, skip = 1) %>% 
-  #   rename(county_FIPS = `State-County FIPS Code`,
-  #          state = `Select State`,
-  #          tract_FIPS = `State-County-Tract FIPS Code (lookup by address at http://www.ffiec.gov/Geocode/)`,
-  #          ruca_1 = `Primary RUCA Code 2010`,
-  #          ruca_2 = `Secondary RUCA Code, 2010 (see errata)`) %>% 
-  #   select(-`Tract Population, 2010`,-`Land Area (square miles), 2010`,-`Population Density (per square mile), 2010`)
+  # providerinfo_df <- readxl::read_excel(paste0(inputDir,"Provider Information Table.xlsx"))
+  # services_df <- readxl::read_excel(paste0(inputDir,"Services Information Table.xlsx"))
+  
 # County to MSA crosswalk: Needed for median income thresholds
   cty_msa_df <- read_csv(paste0(inputDir,"cty_cbsa_msa_list.csv")) # from March 2020 https://www.census.gov/geographies/reference-files/time-series/demo/metro-micro/delineation-files.html 
 
-# Read in shape files (polygons used for assigning points to geos and for mapping). Do a cache = TRUE
-  # use Tigris to read in shapefiles directly using Census API (no local files needed)
-  counties_c <- tigris::counties(cb = TRUE, year = 2020)
-  tract_c <- tigris::tracts(cb = TRUE, year = 2020) # default format is sf but can also set class = "sp" if needed. see help function for gg mapping
-  groups_c <- tigris::block_groups(cb = TRUE, year = 2020)
-
 # Reference list of state names, codes, and counties
   fipscodes <- tidycensus::fips_codes # list of state and county names and fips codes
-  mystates <- fipscodes$state_code %>% unique() # vector of all state fips codes for later looping
+  statefips_remove <- paste(c(60, 66, 69, 70, 72, 74, 78), collapse = '|') # remove american samoa, guam, northern mariana islands, palau, puerto rico, us minor outlying islands, virgin islands
+  mystates <- fipscodes %>% filter(!str_detect(as.numeric(state_code), statefips_remove)) %>% select(state_code) %>% unique() # vector of all state fips codes for later looping
+  
+# Read in shape files (polygons used for assigning points to geos and for mapping). Default format is sf but can also set class = "sp" if needed
+  # use Tigris to read in shapefiles directly using Census API (no local files needed)
+  counties_c <- tigris::counties(cb = TRUE, year = 2020) %>% filter(!str_detect(STATEFP, statefips_remove))
+  tract_c <- tigris::tracts(cb = TRUE, year = 2020) %>% filter(!str_detect(STATEFP, statefips_remove)) # goes from 85187 to 84122 (drops 1065)
+  groups_c <- tigris::block_groups(cb = TRUE, year = 2020) %>% filter(!str_detect(STATEFP, statefips_remove)) #242298 ish? to 239380 
+  # note that downloading all block shapefiles is quite large, takes a long time. WA is 120m, or 158,093 blocks.
+  blocks_c <- data.frame()
+  for (state_i in mystates) {
+    blockstemp <- tigris::blocks(year = 2020,
+                                 state = state_i)  
+    blocks_c <-rbind(blocks_c, blockstemp)
+  }
+  save(blocks_c, file =  "blocks_c.rda") # just need to do this once to do the radius part then never have to load this big file again
 
-# CURRENT CODE STATUS. start here next time
-  # read in the geocoded pharmacies with tract assigned: Line 315
-  pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
-  # read in the tract-level data line :
-  load(file =  "censusdata6.rda")
-  # skip down to line 665
-  
+# CURRENT CODE STATUS. load these final files for analysis/map manipulation:
+  # FIX THIS TOMORROW W DECENNIAL TRACTS
+  load("datafull.df.rda")
+  datafull_df <- readRDS("datafull_df.rda") # dataframe version w no geocoding
+  datafull_geo4326 <- readRDS("datafull_geo4326") # WSG84 google maps crs
+  datafull_geo4269 <- readRDS("datafull_geo4269") # NAD83 the census crs 
+  # save ones of pharmacies too
+  pharmacies_df <- readRDS("pharmacies_df")
+  pharmacies_geo4326 <- readRDS("pharmacies_geo4326") # WSG84 google maps crs 
+  pharmacies_geo4269 <- readRDS("pharmacies_geo4269") # NAD83 the census crs
+
   
 # 2222222222222222222222222222222222222222222222222222222222222222222222222
 # 2222222222222222222222222222222222222222222222222222222222222222222222222
-# 2 Geocode pharmacy addresses -- DONE, CAN SKIP) #########################
+# 2 Geocode pharmacy addresses -- DONE, CAN SKIP ##########################
 # 2222222222222222222222222222222222222222222222222222222222222222222222222
 
 # # Merge NCPDP data tables
@@ -259,7 +266,7 @@
   #          address1, address2, city, state, zip, county_fips)
   # write.csv(missingadddresses, "missingaddresses1.csv")
   # Manual step here: 
-    # look up the individual addresses for these 34 observationsin Google Maps
+    # look up the individual addresses for these 34 observations in Google Maps
     # add lat and lon to csv, read it back in
     missingaddresses2 <- read.csv("missingaddresses1.csv")
     missingaddresses2$latnew <- missingaddresses2$lat
@@ -311,26 +318,18 @@
       }
     # Join result of loop (GEOIDs) to pharmgeo_df to get our main dataframe of pharmacies now with GEOID of tract
     pharmgeo_df4 <- left_join(pharmgeo_df3, tempstorage, by = "ncpdp_id")
-    # save as a csv so don't have to run this loop every time
-    write.csv(pharmgeo_df4, "pharmgeo_df4.csv")
-    pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
-    
-    View(pharmgeo_df4)
-    
-    
-    
-    # when read it back in, convert to sf type not df
-    pharmgeo_df5 <- st_as_sf(pharmgeo_df4,
-                            coords = c("lon", "lat"),
-                            crs = 4326) # wgs84 this is the google maps geocode
-  
+    colnames(pharmgeo_df4)
+    # # save as a csv so don't have to run this loop every time
+    # write.csv(pharmgeo_df4, "pharmgeo_df4.csv")
+    # pharmgeo_df4 <- read.csv("pharmgeo_df4.csv")[,-1]
     
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
 # 4 Create dataset for each row = census tract ############################
 # 4444444444444444444444444444444444444444444444444444444444444444444444444
 
-# Read in census variables (from: https://api.census.gov/data/2021/acs/acs5/variables.html)
+## Variables from ACS (Sociodemographic) ####
+# Read in ACS census variables (from: https://api.census.gov/data/2021/acs/acs5/variables.html)
     census_vars <- c(
         # population by age and gender
         "B01001_001", "B01001_007", "B01001_008", "B01001_009", "B01001_010","B01001_011","B01001_012","B01001_013","B01001_014","B01001_015","B01001_016","B01001_017","B01001_018","B01001_019","B01001_020","B01001_021","B01001_022","B01001_023","B01001_024","B01001_025",
@@ -442,9 +441,6 @@
       censusdata <-rbind(censusdata,censusdata_temp)
     }
     
-    
-    # TODO: then use tidycensus to add up all the moe for each estimate as well: https://walker-data.com/census-r/wrangling-census-data-with-tidyverse-tools.html?q=error#calculating-group-wise-margins-of-error
-    
     # Create proportions and estimates using the estimates of each variable
     censusdata2 <- censusdata %>% rowwise() %>% 
       mutate(pop_total = B01001_001E,
@@ -480,10 +476,92 @@
              inequality_gini = B19083_001E,
              ) %>% 
       ungroup() %>% as.data.frame() 
+    # This has data for 84414 tracts, as opposed to tigris polygons have 84122 tracts? Diff of 292.
     # Get quick check of how many census tracts in US have 0 population (and thus no estimates of these variables)
     nopop <- censusdata2 %>% filter(pop_total == 0) #811 tracts in the US have no pop. Don't drop yet bc may have pharmacies in them!
     # write this csv so we don't have to keep re-running this when we find errors
-    write.csv(censusdata2, "censusdata2.csv")
+    # write.csv(censusdata2, "censusdata2.csv")
+    
+## Variables from Decennial (Population Counts) ####  
+# Add decennial data in for population by tract, incl by adult/elderly
+    variables_dec <- c("P12_001N", # total population
+                       "P12_002N", # total male 
+                       "P12_007N", # male 18-19
+                       "P12_008N", # male 20
+                       "P12_009N", # male 21
+                       "P12_010N", # male 22-24
+                       "P12_011N", # male 25-29
+                       "P12_012N", # male 30-34
+                       "P12_013N", # male 35-39
+                       "P12_014N", # male 40-44
+                       "P12_015N", # male 45-49
+                       "P12_016N", # male 50-54
+                       "P12_017N", # male 55-59
+                       "P12_018N", # male 60-61
+                       "P12_019N", # male 62-64
+                       "P12_020N", # male 65-66
+                       "P12_021N", # male 67-69
+                       "P12_022N", # male 70-74
+                       "P12_023N", # male 75-79
+                       "P12_024N", # male 80-84
+                       "P12_025N", # male 85+ years
+                       "P12_026N", # total female
+                       "P12_031N", # female 18-19
+                       "P12_032N", # female 20
+                       "P12_033N", # female 21
+                       "P12_034N", # female 22-24
+                       "P12_035N", # female 25-29
+                       "P12_036N", # female 30-34
+                       "P12_037N", # female 35-39
+                       "P12_038N", # female 40-44
+                       "P12_039N", # female 45-49
+                       "P12_040N", # female 50-54
+                       "P12_041N", # female 55-59
+                       "P12_042N", # female 60-61
+                       "P12_043N", # female 62-64
+                       "P12_044N", # female 65-66
+                       "P12_045N", # female 67-69
+                       "P12_046N", # female 70-74
+                       "P12_047N", # female 75-79
+                       "P12_048N", # female 80-84
+                       "P12_049N") # female 85+ years
+    
+    decennialpop_tract <- data.frame()
+    for (state_i in mystates) {
+      # get the median incomes by tract in each state and store it in a temporary dataframe
+      decennialpop_tract_temp <- get_decennial(
+        sumfile = "dhc",
+        geography = "tract",
+        variables = variables_dec, 
+        state = state_i,
+        geometry = FALSE,
+        output = "wide",
+        year = 2020)
+      # bind the result of each iteration together as the consolidated output
+      decennialpop_tract <-rbind(decennialpop_tract, decennialpop_tract_temp)
+    }
+    rm(decennialpop_tract_temp)
+    
+    # Calculate various pops from decennial tract data for use in analyses:
+    decennialpop_tract2 <- decennialpop_tract %>% rowwise() %>% 
+      mutate(decpop_total_n = P12_001N,
+             decpop_adult_n = sum(c(P12_007N, P12_008N, P12_009N, P12_010N, P12_011N, P12_012N, P12_013N, P12_014N, P12_015N, P12_016N, P12_017N, P12_018N, P12_019N, P12_020N, P12_021N, P12_022N, P12_023N, P12_024N, P12_025N,
+                                    P12_031N, P12_032N, P12_033N, P12_034N, P12_035N, P12_036N, P12_037N, P12_038N, P12_039N, P12_040N, P12_041N, P12_042N, P12_043N, P12_044N, P12_045N, P12_046N, P12_047N, P12_048N, P12_049N)),
+             decpop_male_n = P12_002N,
+             decpop_female_n = P12_026N,
+             decprop_female_p = decpop_female_n/decpop_total_n,
+             decpop_65up_n = sum(c(P12_020N, P12_021N, P12_022N, P12_023N, P12_024N, P12_025N,
+                                   P12_044N, P12_045N, P12_046N, P12_047N, P12_048N, P12_049N))) %>% 
+      ungroup() %>% as.data.frame() %>% 
+      select(-contains(variables_dec))
+
+# merge this with the census tract dataset
+censusdata2 <- dplyr::full_join(censusdata2, decennialpop_tract2, by = "GEOID")
+    # # check: compare tract pops in acs vs decennial
+    # summary(censusdata2$pop_adult)
+    # summary(censusdata2$decpop_adult)
+    # summary(censusdata2$pop_65up_p)
+    # summary(censusdata2$decpop_65up_n/censusdata2$decpop_total_n)
     
 # 5555555555555555555555555555555555555555555555555555555555555555555
 # 5555555555555555555555555555555555555555555555555555555555555555555
@@ -562,8 +640,6 @@
     write.csv(censusdata4, "censusdata4.csv")
     censusdata4 <- read.csv("censusdata4.csv")[,-1]
     
-    # note: 2079 tracts have no median income data and FPL is also NA --> can't create low-income flags for these (put NA)
-    
 # 6666666666666666666666666666666666666666666666666666666666666666666
 # 6666666666666666666666666666666666666666666666666666666666666666666
 # 6 Create Definition Part 2: Low-Access ############################
@@ -572,7 +648,6 @@
 # Definition = using population density because 2020 RUCA codes not available until Dec 2023 at earliest
     tract_2021 <- data.frame() # note the loop takes about 2 mins to run
     for (state_i in mystates) {
-      # get the median incomes by tract in each state and store it in a temporary dataframe
       tract_2021_temp <- tidycensus::get_acs(geography = "tract",                 # gets read in with a GEOID field, so can merge with pharmacy points here
                                              variables = "B01001_001E",           # total population
                                              state = state_i,                     # list of all states
@@ -584,9 +659,10 @@
       tract_2021 <-rbind(tract_2021,tract_2021_temp)
     }
   # Merge the 2021 tract population data (above) with the tract_c geo information to get ALAND in m^2
+  # Using population density to define urban, suburban, rural. Loosely based on census doc: https://www2.census.gov/geo/pdfs/reference/ua/Defining_Rural.pdf. Other great reference: https://link.springer.com/article/10.1007/s11524-005-9016-3
   tract_2021_geo <- full_join(tract_2021, as.data.frame(tract_c %>% select(-geometry)), by = "GEOID") %>% 
     select(-STATEFP, -COUNTYFP, -STUSPS, -NAMELSADCO, -STATE_NAME, -AWATER) %>% 
-    mutate(pop_density = B01001_001E/(ALAND/2589988.11)) # population density per square meter
+    mutate(pop_density = B01001_001E/(ALAND/2589988.11)) # population density per square mile
            # pop_density = pop_density_m2 / 2589988.11)
   tract_2021_geo <- as.data.frame(tract_2021_geo)
   tract_2021_geo$urbanicity <- ifelse(tract_2021_geo$pop_density >= 5000, 1,
@@ -603,9 +679,8 @@
   tract_2021_geo <- tract_2021_geo %>% mutate(GEOID_tract = GEOID) %>% select(-GEOID, -LSAD, -NAMELSAD, -NAME.x, -NAME.y, -B01001_001M, -B01001_001E)
   censusdata5 <- full_join(censusdata4, tract_2021_geo, by = "GEOID_tract")
   table(censusdata5$accessradius, useNA = "always")
-  censusdata5$accessradius <- ifelse(censusdata5$lowveh_bin == 1 & !is.na(censusdata5$pop_adult), 0.5, censusdata5$accessradius) # check this... something weird happened.
-  
-  save(censusdata5, file =  "censusdata5.rda")
+  censusdata5$accessradius <- ifelse(censusdata5$lowveh_bin == 1 & !is.na(censusdata5$pop_adult), 0.5, censusdata5$accessradius)
+  # save(censusdata5, file =  "censusdata5.rda")
   
 # After this we deal with pharmacies and census tracts
   # Group pharmgeo by by GEOID for census tract, count number of pharmacies per census tract
@@ -621,7 +696,6 @@
 
   # join pharmacies dataframe w urban/rural and codes and census dataframe 
   censusdata6 <- full_join(censusdata5, pharm_to_tract, by = "GEOID_tract") %>% filter(!is.na(tract_name))
-    # 1068 have NA tract name -> these IDS are guam, pr, virgin islands, american samoa. drop them
   # 1065 have 0 pharmacies and 0 population (keep for now)
  
   # create cols for n pharmacies per tract, pharmacies per 1000 adult population, pharmacies per 65+ population
@@ -629,26 +703,28 @@
   censusdata6$ph_per_adultpop <- censusdata6$ph_per_tract/censusdata6$pop_adult*1000
   censusdata6$ph_per_65pop <- censusdata6$ph_per_tract/censusdata6$pop_65up_n*1000
   
-  write.csv(as.data.frame(censusdata6 %>% select(-geometry)), "censusdata6.csv")
+  # write.csv(as.data.frame(censusdata6 %>% select(-geometry)), "censusdata6.csv")
   # clear old dfs for space
   # rm(censusdata, censusdata2, censusdata3, censusdata4, censusdata_temp, cty_msa_df, income_state, income_tract, incomedata_df, income_tract_temp, nopop, providerinfo_df, services_df, test, test2, tract_2021, tract_2021_temp, tract_2021_geo, dfformerge1, income_msa, pharmgeo_df, pharmgeo_df2)
  
-  # put this back as a geo for use in mapping
-  censusdata7 <- st_as_sf(censusdata6, # transform this to a geo for use in maps
-                          crs = 4269) # NAD83 which is what census uses (bc that's what our polygons on this df are from)
-  class(censusdata7)
+  
 
 # Back to the pharmacy dataset: take the pharmacy dataset and add the urban/rural radius information to it so we can calculate the buffers
   # add rural/urban status by GEOID to each pharmacy
   ruralurbankey <- censusdata6 %>% select(GEOID_tract, urbanicity, accessradius) %>% unique() %>% rename(GEOID = GEOID_tract)
-  pharmgeo_df6 <- left_join(pharmgeo_df5, ruralurbankey, by = "GEOID") # pharmgeodf5 is in crs = 4326 =  wgs84 this is the google maps geocode
+  pharmgeo_df5 <- left_join(pharmgeo_df4, ruralurbankey, by = "GEOID") # pharmgeodf4 is in crs = 4326 =  wgs84 this is the google maps geocode
   
-  # There are 25 pharmacies not assigned a GEOID. Come back to these later to manually add them in if time.
-  test <- pharmgeo_df6 %>% filter(is.na(accessradius))
-  # These 25 pharmacies were not assigned a GEOID. Add manually (then move back up above). so note that the lat/lon in here are for google maps, transform this before using census's geocoder.
-  missinggeos <- st_transform(pharmgeo_df6, crs = 4269) %>% filter(is.na(accessradius))# transform it to census crs
-  write.csv(missinggeos, "missingpharmgeos2.csv") # use these lat/long to put into census geocoder and add GEOIDs manually 
-
+  # # There are 26 pharmacies not assigned a GEOID. Come back to these later to manually add them in if time.
+  # possibly can use call_geolocator for each address to geocode it? page 11 here: https://cran.r-project.org/web/packages/tigris/tigris.pdf
+  # test <- pharmgeo_df5 %>% filter(is.na(accessradius))
+  # # These 25 pharmacies were not assigned a GEOID. Add manually (then move back up above). so note that the lat/lon in here are for google maps, transform this before using census's geocoder.
+  # missinggeos <- st_transform(pharmgeo_df5, crs = 4269) %>% filter(is.na(accessradius))# transform it to census crs
+  # write.csv(missinggeos, "missingpharmgeos2.csv") # use these lat/long to put into census geocoder and add GEOIDs manually 
+  # when read it back in, convert to sf type not df
+  
+  pharmgeo_df6 <- st_as_sf(pharmgeo_df5,
+                           coords = c("lon", "lat"),
+                           crs = 4326) # wgs84 this is the google maps geocode
   
   # Define the buffers
   radius_km <- swfscMisc::convert.distance(c(0.5, 1, 5, 10), from = c("mi"), to = c("km"))
@@ -662,66 +738,236 @@
   buffers2 <- rbind(buffers_0.5mi, buffers_1mi, buffers_5mi, buffers_10mi)
   buffers2 <- st_transform(buffers2, crs = 4326) # transform back to wsg84 / google maps version to use with leaflet
   
-  groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # just make sure the census block group polys are same crs as the buffer df
-  centroidsgroups <- st_centroid(groups_c_trans %>% filter(!STATEFP %in% c(60, 66,69,72,78))) # create a df of the points that are the centroids of each block, filter out the territories
+  # old version: calculate proportion in radius with block groups
+  groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # make census block group polys are same crs as the buffer df
+  identical(st_crs(groups_c_trans),st_crs(buffers2)) # checking, output is TRUE
+  centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
   centroidsgroups$inbuffer_bin <- st_within(centroidsgroups, buffers2) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+  
+  # new version: calculate proportion in radius with blocks instead of block groups for more geographic granularity
+  blocks_c_trans <- st_transform(blockstemp, crs = st_crs(buffers2)) # make census block group polys are same crs as the buffer df
+  identical(st_crs(blocks_c_trans),st_crs(buffers2)) # output is TRUE
+  centroidsblocks <- st_centroid(blocks_c_trans) # create a df of the points that are the centroids of each block
+  centroidsblocks$inbuffer_bin <- st_within(centroidsblocks, buffers2) %>% lengths > 0 # define: is the block centroid in any buffer? Likely will have to do this in loops again
 
-  groupspop <- data.frame() # note the loop takes about 2 mins to run
+### FIX HERE TUESDAY START  -----------  
+  # groupspop <- data.frame() # note the loop takes about 2 mins to run
+  # for (state_i in mystates) {
+  #   # get the median incomes by tract in each state and store it in a temporary dataframe
+  #   groupspop_temp <- tidycensus::get_acs(geography = "block group",                 # gets read in with a GEOID field, so can merge with pharmacy points here
+  #                                          variables = "B01001_001E",           # total population
+  #                                          state = state_i,                     # list of all states
+  #                                          geometry = TRUE,                    # if false, doesnt read in geometry col with lat/long
+  #                                          output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
+  #                                          year = 2021,
+  #                                          survey = "acs5")   
+  #   # bind the result of each iteration together as the consolidated output
+  #   groupspop <-rbind(groupspop,groupspop_temp)
+  # }
+  
+  
+  blockspop_dec <- data.frame() # note the loop takes about 2 mins to run. Don't need this loop anymore for block pops
   for (state_i in mystates) {
     # get the median incomes by tract in each state and store it in a temporary dataframe
-    groupspop_temp <- tidycensus::get_acs(geography = "block group",                 # gets read in with a GEOID field, so can merge with pharmacy points here
-                                           variables = "B01001_001E",           # total population
-                                           state = state_i,                     # list of all states
-                                           geometry = TRUE,                    # if false, doesnt read in geometry col with lat/long
-                                           output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
-                                           year = 2021,
-                                           survey = "acs5")   
+    blockspop_dec_temp <- tidycensus::get_decennial(geography = "block",                 # gets read in with a GEOID field, so can merge with pharmacy points here
+                                          variables = "P1_001N",                         # total population
+                                          state = state_i,                               # list of all states
+                                          geometry = TRUE,                               # if false, doesnt read in geometry col with lat/long
+                                          output = "wide",
+                                          year = 2020)   
     # bind the result of each iteration together as the consolidated output
-    groupspop <-rbind(groupspop,groupspop_temp)
+    blockspop_dec <-rbind(blockspop_dec,blockspop_dec_temp)
   }
-    
+  
+    # basically can use inbufferbin instead of this groupsjoin step (so start line 704 creating in_pop), then eventually join it with censusdata6 on line 711 there.
     groups_join <- full_join(groupspop, as.data.frame(centroidsgroups), by = "GEOID") # drop ~400 of these bc they are block groups wiht no pop are 100% water
     groups_join2 <- groups_join %>% rowwise() %>% 
       mutate(pop_total = B01001_001E) %>% 
+      filter(!is.na(pop_total)) %>% 
       ungroup() %>% as.data.frame() %>% 
       dplyr::select(GEOID, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer_bin, pop_total)
-    
+
     # column for the population of each block group whose centroid is in a pharmacy buffer:
-    groups_join2$in_pop <- ifelse(groups_join2$inbuffer_bin == TRUE, groups_join2$pop_adult, 0)
+    groups_join2$in_pop <- ifelse(groups_join2$inbuffer_bin == TRUE, groups_join2$pop_total, 0)
     
-    groups_join2$GEOID10 <- substr(groups_join2$GEOID, 1, 11)
-    groups_join3 <- groups_join2 %>% group_by(GEOID10) %>% summarise(in_pop_total = sum(in_pop)) %>% 
-      mutate(GEOID = GEOID10) %>% select(GEOID, in_pop_total) 
+    groups_join2$GEOID_tract <- substr(groups_join2$GEOID, 1, 11)
+    groups_join3 <- groups_join2 %>% group_by(GEOID_tract) %>% 
+      summarise(in_pop_total = sum(in_pop)) %>% 
+      select(GEOID_tract, in_pop_total) 
     
-    datafull <- full_join(mydata_sf, groups_join3, by = "GEOID") # TODO make sure here I'm joining with the census / full remaining data
+    datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") 
+    
+### FIX HERE TUESDAY END -----------  
     
     # create final variables for low-access
-    datafull$in_pop_percent <- datafull$in_pop_total/datafull$pop_adult
+    datafull$in_pop_percent <- datafull$in_pop_total/datafull$pop_total
     datafull$in_pop_percent_flag <- ifelse(datafull$in_pop_percent <0.667 | datafull$in_pop_total < 500, 1, 0)
     
-    write.csv(datafull, "datafull_072023.csv")
     
 # 77777777777777777777777777777777777777777777777777777777777777777777
 # 77777777777777777777777777777777777777777777777777777777777777777777
-# 7 Create Definition of Pharmacy Deserts and Exploratory Tables #####
+# 7 Create Definition of Pharmacy Deserts and Save Final Files #######
 # 77777777777777777777777777777777777777777777777777777777777777777777
     
     # note: of the 85479 -> 2079 tracts have no median income data and FPL is also NA --> can't create low-income flags for these (put NA not 0 for pharmacy desert)
     # also, 552 have NA for median income data but were able to fill out FPL_p. 231 (41.9%) meet low-income flag criteria based on FPL proportion. The others can't be determined.
     
     # Do final cleaning and dropping of columns
+    datafull$lowincome_bin <- ifelse(datafull$low_income_medincome_flag == 1 | datafull$fpl_percent_bin == 1, 1, 0)
+    datafull$ph_per_tract <- ifelse(is.na(datafull$ph_per_tract), 0, datafull$ph_per_tract)
+    datafull$ph_per_totalpop <- ifelse(is.na(datafull$ph_per_totalpop), 0, datafull$ph_per_totalpop)
+    datafull$ph_per_adultpop <- ifelse(is.na(datafull$ph_per_adultpop), 0, datafull$ph_per_adultpop)
+    datafull$ph_per_65pop <- ifelse(is.na(datafull$ph_per_65pop), 0, datafull$ph_per_65pop)
+    
+    datafull <- datafull %>% select(-TRACTCE, -AFFGEOID, -ALAND, -NAME)
+   
+    # note: 2079 tracts have no median income data and FPL is also NA --> can't create low-income flags for these (put NA)
+    # are there any tracts with no income data but do have ppl? put not determined if so
+    # any tracts with no people and 0 pharmacies? put NA
+    
     # Create pharmacy desert definition: low-income and low-access
-    datafull$pharmacydesert <- ifelse(datafull$lowincome_bin == 1 & datafull$in_pop_percent_flag == 1, 1, 0)
+    datafull$pharmacydesert_bin <- ifelse((datafull$lowincome_bin == 1 & datafull$in_pop_percent_flag == 1) |
+                                        (datafull$lowincome_bin == 1 & datafull$pop_total != 0 & datafull$ph_per_tract == 0), 1, 0) #why are there 1020 NAs here..? from PR
+    datafull$totalpop_phdesert <- ifelse(datafull$pharmacydesert_bin == 1, datafull$pop_total, 0)
+    datafull$adultpop_phdesert <- ifelse(datafull$pharmacydesert_bin == 1, datafull$pop_adult, 0)
+    datafull$pop65_phdesert <- ifelse(datafull$pharmacydesert_bin == 1, datafull$pop_65up_n, 0)
+    datafull <- datafull %>% filter(!is.na(pharmacydesert_bin))
+
+# Pharmacies dataset: row = pharmacy but do a  join and add indicator of urbanicity and the pharmacy desert status of that pharmacy
+  pdbin_df <- datafull_df %>% select(GEOID_tract, pharmacydesert_bin) %>% rename(GEOID = GEOID_tract)
+  pharmgeo_df7 <- left_join(pharmgeo_df5, pdbin_df, by = "GEOID")
+  colnames(pharmgeo_df7)
     
-# 88888888888888888888888888888888888888888888888888888888888888888
-# 88888888888888888888888888888888888888888888888888888888888888888
-# 8 Conduct Statistical Analyses and State-Level Reports ##########
-# 88888888888888888888888888888888888888888888888888888888888888888
+# save one version as a data frame and one version as a geo. Same w pharmacy dataframe
+  datafull_df <- datafull %>% select(-geometry) %>% as.data.frame()
+  saveRDS(datafull_df, file = "datafull_df")
+  saveRDS(pharmgeo_df7, file = "pharmacies_df")
+  
+  # save census tract geos
+  datafull_geo4269 <- st_as_sf(datafull, # transform this to a geo for use in maps
+                          crs = 4269) # NAD83 which is what census uses (bc that's what our polygons on this df are from)
+  saveRDS(datafull_geo4269, file = "datafull_geo4269")
+    
+  datafull_geo4326 <- st_transform(datafull_geo4269, # transform this to a geo for use in maps
+                          crs = 4326) # WSG84 which is what googlemaps uses uses (for mapping)
+  saveRDS(datafull_geo4326, file = "datafull_geo4326")
+  
+  # save pharmacy points geo
+  saveRDS(pharmgeo_df6, file = "pharmacies_geo4326") # WGS84 Google. Also note used pharmgeodf6 here whic hdoesnt include the pharmdesert bin status of the points
+    
+  pharmgeo_df_geo4269 <- st_transform(pharmgeo_df6, # transform this to a geo for use in maps
+                                   crs = 4269) #NAD83 which is what census uses
+  saveRDS(pharmgeo_df_geo4269, file = "pharmacies_geo4269")
 
 
+
+# Add labels to the dataset variables
+label(datafull_df$pop_total) <- "Total Population"
+label(datafull_df$pop_adult) <- "Adult Population"
+label(datafull_df$pop_65up_n) <- "Older Adult (65+) Population"
+label(datafull_df$pop_65up_p) <- "Prop. Older Adult (65+)"
+label(datafull_df$fpl_p) <- "Prop. Below FPL"
+label(datafull_df$median_income) <- "Median Income"
+label(datafull_df$educ_hs_p) <- "Prop. Less Than High School Education"
+label(datafull_df$race_nh_white_p) <- "Prop. NH, White"
+label(datafull_df$race_nh_black_p) <- "Prop. NH, Black"
+label(datafull_df$race_nh_asian_p) <- "Prop. NH, Asian"
+label(datafull_df$race_nh_aian_p) <- "Prop. NH, AIAN"
+label(datafull_df$race_nh_2p_p) <- "Prop. NH, 2 or More Races"
+label(datafull_df$race_nh_other_p) <- "Prop. NH, Other Race"
+label(datafull_df$race_hisp_white_p) <- "Prop. Hispanic, White Race"
+label(datafull_df$race_hisp_black_p) <- "Prop. Hispanic, Black Race"
+label(datafull_df$race_hisp_asian_p) <- "Prop. Hispanic, Asian Race"
+label(datafull_df$race_hisp_aian_p) <- "Prop. Hispanic, AIAN Race"
+label(datafull_df$race_hisp_2p_p) <- "Prop. Hispanic, 2 or More Races"
+label(datafull_df$race_hisp_other_p) <- "Prop. Hispanic, Other Race"
+label(datafull_df$ins_none_p) <- "Prop. With No Health Insurance"
+label(datafull_df$ins_public_p) <- "Prop. With Public Health Insurance"
+label(datafull_df$notenglspeak_p) <- "Prop. Do Not Speak English"
+label(datafull_df$disability_p) <- "Prop. Ambulatory Disability"
+label(datafull_df$inequality_gini) <- "GINI Inequality Index"
+label(datafull_df$pop_density) <- "Population Density"
+datafull_df$urbanicity <- factor(datafull_df$urbanicity,
+                                          levels = c(1,2,3), 
+                                          labels = c("Urban",
+                                                     "Suburban",
+                                                     "Rural"))
+label(datafull_df$urbanicity) <- "Urbanicity"
+  datafull_df$pharmacydesert_bin <- factor(datafull_df$pharmacydesert_bin,
+                                           levels = c(1,0), # NEED TO CHECK HERE- there should be some PDs that are NA?
+                                           labels = c("Pharmacy Desert",
+                                                      "Not Pharmacy Desert"))
+label(datafull_df$pharmacydesert_bin) <- "Pharmacy Desert Status"
+label(datafull_df$totalpop_phdesert) <- "Total Population in Pharmacy Desert"
+label(datafull_df$adultpop_phdesert) <- "Adult Population in Pharmacy Desert"
+label(datafull_df$pop65_phdesert) <- "Older Adult (65+) Population in Pharmacy Desert"
+
+# Do crosstabs to check the NAs of PDs, and others
+
+# 88888888888888888888888888888888888888888888888888888888888888888
+# 88888888888888888888888888888888888888888888888888888888888888888
+# 8 Make Summary Tables and Statistical Analyses ##################
+# 88888888888888888888888888888888888888888888888888888888888888888
+  
 # Create summary tables per supplement in long proposal
-    
-    
+statenames <- fipscodes %>% select(state_name, state_code) %>% unique() %>% filter(!state_code %in% c(60,66,69,72,74,78))
+datafull_df$state_fips <- as.character(datafull_df$state_fips)
+
+# Table 1: Population living in pharmacy deserts by State  
+table1 <- datafull_df %>% group_by(state_fips) %>% 
+  rename(state_code = state_fips) %>% 
+  full_join(., statenames, by = "state_code") %>% 
+  summarise(n_tracts = n(),
+            totalpop = sum(pop_total),
+            n_phdeserts = sum(pharmacydesert_bin),
+            pop_phdeserts = sum(totalpop_phdesert),
+            p_popdeserts = round(pop_phdeserts/totalpop*100,2)) %>% 
+  arrange(desc(p_popdeserts)) %>% 
+  right_join(., statenames, by = "state_code") %>% 
+  select(state_name, p_popdeserts, pop_phdeserts, n_tracts, n_phdeserts) %>% 
+  rename(State = state_name,
+         Proportion_Population_in_Deserts = p_popdeserts,
+         Number_Population_in_Deserts = pop_phdeserts,
+         Number_Census_Tracts = n_tracts,
+         Number_Pharmacy_Desert_Tracts = n_phdeserts)
+View(table1)
+write.csv(table1, "table1.csv")
+
+# Table 2: Characteristics of pharmacy desert neighborhoods
+datafull_df$pharmacydesert_bin2 <- factor(datafull_df$pharmacydesert_bin,
+                                          levels = c(1,0), # NEED TO CHECK HERE- there should be some PDs that are NA?
+                                          labels = c("Pharmacy Desert",
+                                                     "Not Pharmacy Desert"))
+table1::table1(~ fpl_p + median_income + educ_hs_p + ins_none_p + ins_public_p + 
+                 notenglspeak_p + disability_p + pop_65up_p +
+                 urbanicity +
+                 race_nh_white_p + race_nh_black_p + race_nh_asian_p + race_nh_aian_p + race_nh_2p_p + race_nh_other_p +
+                 race_hisp_white_p + race_hisp_black_p + race_hisp_asian_p + race_hisp_aian_p + race_hisp_2p_p + race_hisp_other_p
+               | pharmacydesert_bin, 
+               data = datafull_df)
+
+# Table 3: Characteristics of pharmacies in pharmacy deserts
+pharmacies_df$pharmacydes
+table1::table1
+
+
+### TODO LIST RUNNING ####
+
+# TODO: Check missings for the income variables, add missings for PD status? 
+# TODO: Compare my cutoffs w census urban/rural binary to compare
+# TODO: Use only Mean for the proportions vars
+# TODO: Add decennial pops in for tract for Table 1
+# TODO: Use decennial blocks for areal interpolation for more accurate radius char.
+# TODO: Create summary table of pharmacies by PD status vs. not (Table 3). Line 803, in-progress.
+# TODO: Create 1 map as a visual check that the dots are where they are supposted to be
+# TODO: Add p values to table
+# TODO: Add footnotes for abbreviations for table
+# TODO: Create function to make table output by state
+# TODO: Crosstabs of data to check missings or weird things
+# TODO: Make step by step list of tract counts and pharmacy counts for flow chart of what data is included
+# TODO: Will I use tidycensus to add up all the moe for each estimate as well? What do w this https://walker-data.com/census-r/wrangling-census-data-with-tidyverse-tools.html?q=error#calculating-group-wise-margins-of-error
+
+
 # 99999999999999999999999999999999999999999999999999999999999999999
 # 99999999999999999999999999999999999999999999999999999999999999999
 # 9 Maps and visualizations #######################################
@@ -799,7 +1045,7 @@ map_ur_WA <- leaflet(width = "100%") %>%                     # sets the width of
 # X Archive Code ##################################################
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
-
+###### MOE for census ####
 
 # NOT SURE APPROACH FOR MEOs YET- come back to this.
 # censusdata2_tidytest <- censusdata %>% rowwise() %>% 
@@ -863,14 +1109,6 @@ map_ur_WA <- leaflet(width = "100%") %>%                     # sets the width of
 # censusvarstest <- censusdata2 %>% select(-geometry)
 # write.csv(censusvarstest, "censusdfWAonlytest.csv")
 
-# Decennial tract pops (error)
-total_population_20 <- get_decennial(
-  geography = "tract", 
-  variables = "P001001",
-  year = 2020
-)
-
-
 # # Check if ZIPs are available so could use florida data
 # censusdata_FLzip <- tidycensus::get_acs(geography = "zcta",          # gets read in with a GEOID field, so can merge with pharmacy points here
 #                                        variables = "B19013_001",            # income 
@@ -879,7 +1117,17 @@ total_population_20 <- get_decennial(
 #                                        year = 2021,
 #                                        survey = "acs5")
 
+###### RUCA Codes ####
 # Using RUCA Codes for urban/rural definitions:
+# RUCA codes from USDA https://www.ers.usda.gov/data-products/rural-urban-commuting-area-codes.aspx . 
+# # As of June 2023 only 2010 RUCA codes are available- 2020 RUCAs will be available in Dec 2023 at earliest
+# ruca_df <- readxl::read_excel(paste0(inputDir,"ruca2010revised.xlsx"), sheet = 1, skip = 1) %>% 
+#   rename(county_FIPS = `State-County FIPS Code`,
+#          state = `Select State`,
+#          tract_FIPS = `State-County-Tract FIPS Code (lookup by address at http://www.ffiec.gov/Geocode/)`,
+#          ruca_1 = `Primary RUCA Code 2010`,
+#          ruca_2 = `Secondary RUCA Code, 2010 (see errata)`) %>% 
+#   select(-`Tract Population, 2010`,-`Land Area (square miles), 2010`,-`Population Density (per square mile), 2010`)
 # Merge the census tract data with RUCA data and define urban, suburban, rural tracts. Ruca 2020 codes not available until December 2023 at earliest: https://www.ers.usda.gov/data-products/rural-urban-commuting-area-codes.aspx
 ruca_df$GEOID_tract <- as.character(ruca_df$tract_FIPS)
 mydata_sf <- full_join(censusdata4, ruca_df, by = "GEOID_tract") %>% 
@@ -929,6 +1177,85 @@ table(tract_compare$cat, useNA = "always").
 # Decision: Can't use RUCA codes to determine urbanicity. The 2020 ones won't be out until December at the earliest. Think of something else in the meantime.
 # Use pop density: if > 5000 person / sq mile then is urban, > 1000 ppsq = suburban, <1000 = rural. Helpful visualization: https://mtgis-portal.geo.census.gov/arcgis/apps/MapSeries/index.html?appid=2566121a73de463995ed2b2fd7ff6eb7
 
+###### Decennial population data ####
+# # Getting true pop counts from decennial for census tracts and for block groups. Explore whether they tend to be bigger or smaller.
+dectotalpop_tract <- data.frame()
+for (state_i in mystates) {
+  # get the median incomes by tract in each state and store it in a temporary dataframe
+  dectotalpop_tract_temp <- get_decennial(geography = "tract",
+                                          variables = "P12_001N",
+                                          state = state_i,
+                                          geometry = FALSE,
+                                          output = "wide",
+                                          year = 2020)
+  # bind the result of each iteration together as the consolidated output
+  dectotalpop_tract <-rbind(dectotalpop_tract, dectotalpop_tract_temp)
+}
+# merge in the decennial pop tract
+
+# test:
+testdectotalpop <- get_decennial(geography = "tract",
+                                        variables = "P1_001N",
+                                        state = 53,
+                                        geometry = FALSE,
+                                        output = "wide",
+                                        year = 2020)
+
+# trying w other package: https://www.hrecht.com/censusapi/articles/getting-started.html
+apis <- listCensusApis()
+colnames(apis)
+dec_vars <- listCensusMetadata(
+  name = "2020/dec/dhc", 
+  type = "variables")
+listCensusMetadata(
+  name = "2020/dec/dhc", 
+  type = "geography")
 
 
-  
+
+test2 <- getCensus(name = "dec/dhc", vintage = 2020, vars = "P12_001N", region = "state:*", key = my_api_key)
+test3 <- get_decennial(sumfile = "dhc",
+                       year = 2020,
+                       geography = "tract",
+                       state = "53",
+                       output = "wide",
+                       variables = variables_dec,
+                       geometry = FALSE)
+
+
+# Getting true pop counts from decennial for census tracts and for block groups. Explore whether they tend to be bigger or smaller.
+decennialpop_tract <- data.frame()
+for (state_i in mystates) {
+  # get the median incomes by tract in each state and store it in a temporary dataframe
+  decennialpop_tract_temp <- get_decennial(geography = "tract",
+                                           variables = "P12_001N", 
+                                           state = state_i,
+                                           geometry = FALSE,
+                                           output = "wide",
+                                           year = 2020)
+  # bind the result of each iteration together as the consolidated output
+  decennialpop_tract <-rbind(decennialpop_tract, decennialpop_tract_temp)
+}
+
+# join these and see whether in general tracts or decennial has more
+head(decennialpop_tract)
+nrow(decennialpop_tract)
+head(tract_2021)
+nrow(tract_2021)
+
+decennialpop_tract <- decennialpop_tract %>% 
+  rename(tractname_dec = NAME,
+         pop_dec = P1_001N) %>%
+  mutate(GEOID_dec = GEOID)
+tract_2021 <- tract_2021 %>% 
+  rename(tractname_acs = NAME,
+         pop_acs = B01001_001E,
+         pop_acs_moe = B01001_001M) %>% 
+  mutate(GEOID_acs = GEOID)
+
+popcompare <- full_join(decennialpop_tract, tract_2021, by = "GEOID") # the exact number stays the same 84414
+summary(popcompare$pop_dec)
+summary(popcompare$pop_acs)
+popcompare$dec_bigger_bin <- ifelse(popcompare$pop_dec > popcompare$pop_acs, 1, 0)
+summary(popcompare$dec_bigger_bin) # has more about half the time, as expected. no NAs
+
