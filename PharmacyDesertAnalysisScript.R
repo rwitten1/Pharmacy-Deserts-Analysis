@@ -79,7 +79,8 @@
   counties_c <- tigris::counties(cb = TRUE, year = 2020) %>% filter(!str_detect(STATEFP, statefips_remove))
   tract_c <- tigris::tracts(cb = TRUE, year = 2020) %>% filter(!str_detect(STATEFP, statefips_remove)) # goes from 85187 to 84122 (drops 1065)
   groups_c <- tigris::block_groups(cb = TRUE, year = 2020) %>% filter(!str_detect(STATEFP, statefips_remove)) #242298 ish? to 239380
-  
+  x <- readRDS("groups_c.RDS")
+  groups_c <- x
 # CURRENT CODE STATUS. load these final files for analysis/map manipulation:
   # As of Sept 17th:
   tractdata_df <- readRDS("tractdata_df.rds") #dataframe
@@ -860,20 +861,20 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     buffers_5mi <- buffers %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
     buffers_10mi <- buffers %>% st_buffer(dist = 16093.440) #10mi in meters
    
-    groups_c_wa <- tigris::block_groups(cb = TRUE, year = 2021) %>% filter(STATEFP %in% 53) #242298 ish? to 239380
+    groups_c <- tigris::block_groups(cb = TRUE, year = 2021) %>% filter(STATEFP %in% 53) #242298 ish? to 239380
     # groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # make census block group polys are same crs as the buffer df
     # identical(st_crs(groups_c_trans),st_crs(buffers2)) # checking, output is TRUE
     # centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
     # centroidsgroups$inbuffer_bin <- st_within(centroidsgroups, buffers2) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
     
     # Do this for each of the 4 radii
-    groups_c_wa_trans <- st_transform(groups_c_wa, crs = st_crs(buffers1mi)) # make census block group polys are same crs as the buffer df
-    identical(st_crs(groups_c_wa_trans),st_crs(buffers1mi)) # checking, output is TRUE
-    centroidsgroups_wa <- st_centroid(groups_c_wa_trans) # create a df of the points that are the geometric centroids of each block group
-    centroidsgroups_wa$inbuffer05_bin <- st_within(centroidsgroups, buffers_0.5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    centroidsgroups_wa$inbuffer1_bin <- st_within(centroidsgroups, buffers_1mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    centroidsgroups_wa$inbuffer5_bin <- st_within(centroidsgroups, buffers_5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    centroidsgroups_wa$inbuffer10_bin <- st_within(centroidsgroups, buffers_10mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+    groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers_1mi)) # make census block group polys are same crs as the buffer df
+    identical(st_crs(groups_c_trans),st_crs(buffers_1mi)) # checking, output is TRUE
+    centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
+    centroidsgroups$inbuffer05_bin <- st_within(centroidsgroups, buffers_0.5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+    centroidsgroups$inbuffer1_bin <- st_within(centroidsgroups, buffers_1mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+    centroidsgroups$inbuffer5_bin <- st_within(centroidsgroups, buffers_5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+    centroidsgroups$inbuffer10_bin <- st_within(centroidsgroups, buffers_10mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
     
     groupspop_dec <- data.frame() # note the loop takes about 2 mins to run
     for (state_i in mystates) {
@@ -881,7 +882,7 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
       groupspopdec_temp <- tidycensus::get_decennial(geography = "block group",                 # gets read in with a GEOID field, so can merge with pharmacy points here
                                              variables = "P1_001N",           # total population
                                              state = state_i,                     # list of all states
-                                             geometry = TRUE,                    # if false, doesnt read in geometry col with lat/long
+                                             geometry = FALSE,                    # if false, doesnt read in geometry col with lat/long
                                              output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
                                              year = 2020)
       # bind the result of each iteration together as the consolidated output
@@ -889,10 +890,10 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     }
     groups_join <- full_join(groupspop_dec, as.data.frame(centroidsgroups), by = "GEOID") # drop ~400 of these bc they are block groups wiht no pop are 100% water
     groups_join2 <- groups_join %>% rowwise() %>%
-        mutate(pop_total = B01001_001E) %>%
+        mutate(pop_total = P1_001N) %>%
         filter(!is.na(pop_total)) %>%
         ungroup() %>% as.data.frame() %>%
-        dplyr::select(GEOID, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer_bin, pop_total)
+        dplyr::select(GEOID, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer05_bin, inbuffer1_bin, inbuffer5_bin, inbuffer10_bin, pop_total)
     
     # create column with population of each block that is in the buffer
     groups_join2$inpop_05mi <- ifelse(groups_join2$inbuffer05_bin == TRUE, groups_join2$pop_total, 0)
@@ -907,15 +908,21 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
                 inpop1_total = sum(inpop_1mi),
                 inpop5_total = sum(inpop_5mi),
                 inpop10_total = sum(inpop_10mi)) %>%
-      select(GEOID_tract, inpop05_total, inpop1_total, inpop5_total, inpop10_total)
+      select(GEOID_tract, inpop05_total, inpop1_total, inpop5_total, inpop10_total) %>% 
+      as.data.frame()
     
-    datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") 
-    
-    
+    datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") %>% 
+      filter(is.na()) %>% 
+      as.data.frame()
     
     # create final variables for low-access
-    datafull$in_pop_percent <- ifelse(datafull$decpop_total_n == 0, "NA: Zero Population", datafull$in_pop_total/datafull$decpop_total_n) # proportion of ppl who live IN the radius zone
-    datafull$out_pop_percent <- 1 - datafull$in_pop_total/datafull$decpop_total_n 
+    datafull$inpop_urbanicity <- ifelse(datafull$accessradius %in% 0.5, datafull$inpop05_total,
+                                        ifelse(datafull$accessradius %in% 1, datafull$inpop1_total,
+                                               ifelse(datafull$accessradius %in% 5, datafull$inpop5_total,
+                                                      ifelse(datafull$accessradius %in% 10, datafull$inpop10_total, 0)))) #399 being set to 0 because there is 0 pop in there (water only from block groups).
+    
+    datafull$in_pop_percent <- ifelse(datafull$decpop_total_n == 0, "NA: Zero Population", datafull$inpop_urbanicity/datafull$decpop_total_n) # proportion of ppl who live IN the radius zone
+    datafull$out_pop_percent <- 1 - datafull$inpop_urbanicity/datafull$decpop_total_n 
     datafull$out_pop_percent <- ifelse(datafull$in_pop_percent %in% "NA: Zero Population", "NA: Zero Population", datafull$out_pop_percent)
     datafull$low_access_bin <- ifelse(datafull$out_pop_percent > 0.333, 1, 0)
     datafull$low_access_bin <- ifelse(datafull$out_pop_percent %in% "NA: Zero Population", "NA: Zero Population", datafull$low_access_bin) # flag for PD if the prop out of the zone is more than 1/3, akak if the prop IN the zone is < 2/3
@@ -965,7 +972,7 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     # saveRDS(datafull, file = "datafull_line864.rds")
     # table(datafull$pharmacydesert_bin, useNA = "always") # there are 105 NAs
     #   # all of these have NA for low income, so not able to make a determination. There are 1010 total tracts that have NA for low income, 811 of these have no population, the remaining 199 have populatoin but have no median income or FPL data available.
-    write.csv(datafull, "datafull_line894_backup.csv") # dont forget to pad zeroes on GEOID if we need to read this in.
+    write.csv(datafull, "datafull_newradius929.csv") # dont forget to pad zeroes on GEOID if we need to read this in.
 
 # Add labels to the dataset variables
     label(datafull$pop_total) <- "Total Population"
@@ -1031,8 +1038,8 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     tractdata_df <- datafull %>% as.data.frame()
     tractdata_sf <- merge(tract_polygons2, (as.data.frame(datafull)))
     
-    saveRDS(tractdata_df, file = "tractdata_df.rds")
-    saveRDS(tractdata_sf, file = "tractdata_sf.rds")
+    saveRDS(tractdata_df, file = "tractdata_929_df.rds")
+    saveRDS(tractdata_sf, file = "tractdata_929_sf.rds")
     
     # write.csv(tractdata_df, "tractdatadftest.csv")
     
@@ -1136,7 +1143,7 @@ table1::table1(~ fpl_p + median_income + educ_hs_p + ins_none_p + ins_public_p +
                  urbanicity +
                  race_nh_white_p + race_nh_black_p + race_nh_asian_p + race_nh_aian_p + race_nh_2p_p + race_nh_other_p +
                  race_hisp_white_p + race_hisp_black_p + race_hisp_asian_p + race_hisp_aian_p + race_hisp_2p_p + race_hisp_other_p
-               | pharmacydesert_bin2, 
+               | pharmacydesert_bin, 
                data = tractdata_df2,
                overall = F,
                extra.col=list(`P-value`=pvalue))
