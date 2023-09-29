@@ -52,6 +52,7 @@
   # register_google(key = "AIzaSyCHb9LTmOgEswBpLGgEt594kIua5NQLxKo", write = TRUE)
 
 # Set working drive and files
+  # test tests
   rootDir <- "~/OneDrive/Documents/School Stuff/Dissertation/Pharmacy-Deserts-Analysis/"
   inputDir <- paste0(rootDir, "Input/")
   outputDir <- paste0(rootDir, "Output/")
