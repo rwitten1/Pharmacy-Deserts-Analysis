@@ -736,7 +736,81 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
   pharmgeo_df6 <- st_as_sf(pharmgeo_df5,
                            coords = c("lon", "lat"),
                            crs = 4326) # wgs84 this is the google maps geocode
+  #### NEW APPROACH FOR RADIUSES: ####
+  ### New structure for radius. ppl in urban tracts need to be 1 mile from any pharmacy, even if that pharmacy is suburban and has a different radius.
+  # new flow: do buffer calc 4 times (just remove the filter part up there):
+  # still get the centroid of each block (group), and add up like before but 4 times with the 4 radiuses
+  # 1 col each with inpop_1mibuffer, inpop_5mibuffer, inpop_10mibuffer, inpop_halfmilebuffer
+  # then inpop_urbanicity is an ifelse with if accessradius = 0.5, then put inpop_halfmilebuffer
+  # then inpop_p is the inpopurbanicity/tractpoptotal.
   
+  # # TESTING WITH BLOCK GROUPS HERE before doing full calc with blocks:
+  # # Define the buffers
+  # radius_km <- swfscMisc::convert.distance(c(0.5, 1, 5, 10), from = c("mi"), to = c("km"))
+  # radius_km*1000
+  # 
+  # buffers <- st_transform(pharmgeo_df6, crs = 3857) #transform to a different projection that uses meters as unit of distance
+  # buffers_0.5mi <- buffers %>% st_buffer(dist = 804.672) #804.672 is 0.5 mile in meters, as calculated in line above
+  # buffers_1mi <- buffers %>% st_buffer(dist = 1609.344) #1609.34 is 1 mile in meters
+  # buffers_5mi <- buffers %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
+  # buffers_10mi <- buffers %>% st_buffer(dist = 16093.440) #10mi in meters
+  # 
+  # groups_c <- tigris::block_groups(cb = TRUE, year = 2021) %>% filter(STATEFP %in% 53) #242298 ish? to 239380
+  # # groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # make census block group polys are same crs as the buffer df
+  # # identical(st_crs(groups_c_trans),st_crs(buffers2)) # checking, output is TRUE
+  # # centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
+  # # centroidsgroups$inbuffer_bin <- st_within(centroidsgroups, buffers2) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+  # 
+  # # Do this for each of the 4 radii
+  # groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers_1mi)) # make census block group polys are same crs as the buffer df
+  # identical(st_crs(groups_c_trans),st_crs(buffers_1mi)) # checking, output is TRUE
+  # centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
+  # centroidsgroups$inbuffer05_bin <- st_within(centroidsgroups, buffers_0.5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+  # centroidsgroups$inbuffer1_bin <- st_within(centroidsgroups, buffers_1mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+  # centroidsgroups$inbuffer5_bin <- st_within(centroidsgroups, buffers_5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+  # centroidsgroups$inbuffer10_bin <- st_within(centroidsgroups, buffers_10mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
+  # 
+  # groupspop_dec <- data.frame() # note the loop takes about 2 mins to run
+  # for (state_i in mystates) {
+  #   # get the median incomes by tract in each state and store it in a temporary dataframe
+  #   groupspopdec_temp <- tidycensus::get_decennial(geography = "block group",                 # gets read in with a GEOID field, so can merge with pharmacy points here
+  #                                                  variables = "P1_001N",           # total population
+  #                                                  state = state_i,                     # list of all states
+  #                                                  geometry = FALSE,                    # if false, doesnt read in geometry col with lat/long
+  #                                                  output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
+  #                                                  year = 2020)
+  #   # bind the result of each iteration together as the consolidated output
+  #   groupspop_dec <-rbind(groupspop_dec,groupspopdec_temp)
+  # }
+  # groups_join <- full_join(groupspop_dec, as.data.frame(centroidsgroups), by = "GEOID") # drop ~400 of these bc they are block groups wiht no pop are 100% water
+  # groups_join2 <- groups_join %>% rowwise() %>%
+  #   mutate(pop_total = P1_001N) %>%
+  #   filter(!is.na(pop_total)) %>%
+  #   ungroup() %>% as.data.frame() %>%
+  #   dplyr::select(GEOID, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer05_bin, inbuffer1_bin, inbuffer5_bin, inbuffer10_bin, pop_total)
+  # 
+  # # create column with population of each block that is in the buffer
+  # groups_join2$inpop_05mi <- ifelse(groups_join2$inbuffer05_bin == TRUE, groups_join2$pop_total, 0)
+  # groups_join2$inpop_1mi <- ifelse(groups_join2$inbuffer1_bin == TRUE, groups_join2$pop_total, 0)
+  # groups_join2$inpop_5mi <- ifelse(groups_join2$inbuffer5_bin == TRUE, groups_join2$pop_total, 0)
+  # groups_join2$inpop_10mi <- ifelse(groups_join2$inbuffer10_bin == TRUE, groups_join2$pop_total, 0)
+  # 
+  # # aggregate to the tract level and sum up populations
+  # groups_join2$GEOID_tract <- substr(groups_join2$GEOID, 1, 11)
+  # groups_join3 <- groups_join2 %>% group_by(GEOID_tract) %>%
+  #   summarise(inpop05_total = sum(inpop_05mi),
+  #             inpop1_total = sum(inpop_1mi),
+  #             inpop5_total = sum(inpop_5mi),
+  #             inpop10_total = sum(inpop_10mi)) %>%
+  #   select(GEOID_tract, inpop05_total, inpop1_total, inpop5_total, inpop10_total) %>% 
+  #   as.data.frame()
+  # 
+  # datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") %>% 
+  #   filter(is.na()) %>% 
+  #   as.data.frame()
+  # # NOTE: overwriting datafull going forward with the blocks method but did save the block groups version as: saveRDS(tractdata_df, file = "tractdatadf_wblockgroups.rds")
+
+## NOW DOING SAME THING BUT WITH BLOCKS
   # Define the buffers
   radius_km <- swfscMisc::convert.distance(c(0.5, 1, 5, 10), from = c("mi"), to = c("km"))
   radius_km*1000
@@ -796,147 +870,13 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     select(GEOID_tract, inpop05_total, inpop1_total, inpop5_total, inpop10_total) %>% 
     as.data.frame()
   saveRDS(centroidsblocks3, file = "centroidsblocks3bufferpops.rds")
-  # SAVE AT THIS POINTS LEAVING THE REMOTE DESKTOP and go back to regulary computer and read in centroidsblocks3s
+  # SAVE AT THIS POINTS LEAVING THE REMOTE DESKTOP and go back to regular computer and read in centroidsblocks3s
+  # now back on regular computer:
+  centroidsblocks3 <- readRDS("centroidsblocks3bufferpops.rds")
   
-  datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") %>% 
-    filter(is.na()) %>% 
+  datafull <- full_join(censusdata6, centroidsblocks3, by = "GEOID_tract") %>% 
+    select(-NAME.x, -NAME.y)
     as.data.frame()
-
-    # rename to blocks_join. column for the population of each block group whose centroid is in a pharmacy buffer:
-    colnames(centroidsblocks_1_39)
-    centroidsblocks_1_39 <- centroidsblocks_1_39 %>% dplyr::select(-MTFCC20, -UACE20, -UATYPE20, -FUNCSTAT20, -ALAND20, -AWATER20)
-    # saveRDS(centroidsblocks_1_39, file = "centroidsblocks1_39_buffbin.RDS")
-    # centroidsblocks_1_39 <- readRDS("centroidsblocks1_39_buffbin.RDS")
-    centroidsblocks_1_39$in_pop <- ifelse(centroidsblocks_1_39$inbuffer_bin == TRUE, centroidsblocks_1_39$POP20, 0)
-    head(centroidsblocks_1_39) # want to group by census tract, may have to make a GEOID_tract column
-    centroidsblocks_1_39$GEOID_tract <- substr(centroidsblocks_1_39$GEOID20, 1, 11)
-    centroidsblocks_1_39_tract <- centroidsblocks_1_39 %>% 
-      group_by(GEOID_tract) %>% 
-      summarise(in_pop_total = sum(in_pop)) %>% 
-      select(GEOID_tract, in_pop_total)
-    centroidsblocks_1_39_tract <- st_drop_geometry(centroidsblocks_1_39_tract) %>% as.data.frame()
-    
-    # chunk2
-    colnames(centroidsblocks_41_56)
-    centroidsblocks_41_56 <- centroidsblocks_41_56 %>% 
-      st_drop_geometry() %>% 
-      as.data.frame() %>% 
-      dplyr::select(-MTFCC20, -UACE20, -UATYPE20, -FUNCSTAT20, -ALAND20, -AWATER20)
-    saveRDS(centroidsblocks_41_56, file = "centroidsblocks_41_56_buffbin.RDS")
-    # centroidsblocks_41_56 <- readRDS("centroidsblocks_41_569_buffbin.RDS")
-    centroidsblocks_41_56$in_pop <- ifelse(centroidsblocks_41_56$inbuffer_bin == TRUE, centroidsblocks_41_56$POP20, 0)
-    head(centroidsblocks_41_56) # want to group by census tract, may have to make a GEOID_tract column
-    centroidsblocks_41_56$GEOID_tract <- substr(centroidsblocks_41_56$GEOID20, 1, 11)
-    centroidsblocks_41_56_tract <- centroidsblocks_41_56 %>% 
-      group_by(GEOID_tract) %>% 
-      summarise(in_pop_total = sum(in_pop)) %>% 
-      select(GEOID_tract, in_pop_total)
-    
-    # chunk 3
-    colnames(centroidsblocks_42)
-    centroidsblocks_42 <- centroidsblocks_42 %>% 
-      st_drop_geometry() %>% 
-      as.data.frame() %>% 
-      dplyr::select(-MTFCC20, -UACE20, -UATYPE20, -FUNCSTAT20, -ALAND20, -AWATER20)
-    saveRDS(centroidsblocks_42, file = "centroidsblocks_40_buffbin.RDS")
-    # centroidsblocks_40 <- readRDS("centroidsblocks_40_buffbin.RDS")
-    centroidsblocks_42$in_pop <- ifelse(centroidsblocks_42$inbuffer_bin == TRUE, centroidsblocks_42$POP20, 0)
-    head(centroidsblocks_40) # want to group by census tract, may have to make a GEOID_tract column
-    centroidsblocks_42$GEOID_tract <- substr(centroidsblocks_42$GEOID20, 1, 11)
-    centroidsblocks_42_tract <- centroidsblocks_42 %>% 
-      group_by(GEOID_tract) %>% 
-      summarise(in_pop_total = sum(in_pop)) %>% 
-      select(GEOID_tract, in_pop_total)
-    
-    saveRDS(centroidsblocks_1_39_tract, file = "centroidsblocks_1_39_tract.RDS")
-    saveRDS(centroidsblocks_41_56_tract, file = "centroidsblocks_41_56_tract.RDS")
-    saveRDS(centroidsblocks_40_tract, file = "centroidsblocks_40_tract.RDS")
-    saveRDS(centroidsblocks_42_tract, file = "centroidsblocks_40_tract.RDS")
-    # centroidsblocks_1_39 <- readRDS("centroidsblocks1_39_buffbin.RDS")
-  
-# then RBIND the tract-level versions of this for 1-39, 41-56, and 40
-    blockstract2 <- rbind(centroidsblocks_1_39_tract, centroidsblocks_41_56_tract, centroidsblocks_40_tract, centroidsblocks_42_tract) #...... etc once ready
-    write.csv(blockstract2, "blockstract2.csv")
-    blockstract3 <- read.csv("blockstract2.csv")[,-1]
-    blockstract3$GEOID_tract <- str_pad(blockstract3$GEOID_tract, width = 11, side = "left", pad = "0") #pad w zeros to make full GEOID
-    # join to census data for final low-access proportion analysis
-    datafull <- full_join(censusdata6, blockstract3, by = "GEOID_tract") 
-    datafull <- datafull %>% select(-NAME.x, -NAME.y)
-    
-    
-    
-    
-#### NEW APPROACH FOR RADIUSES: ####
-    ### New structure for radius. ppl in urban tracts need to be 1 mile from any pharmacy, even if that pharmacy is suburban and has a different radius.
-    # new flow: do buffer calc 4 times (just remove the filter part up there):
-    # still get the centroid of each block (group), and add up like before but 4 times with the 4 radiuses
-    # 1 col each with inpop_1mibuffer, inpop_5mibuffer, inpop_10mibuffer, inpop_halfmilebuffer
-    # then inpop_urbanicity is an ifelse with if accessradius = 0.5, then put inpop_halfmilebuffer
-    # then inpop_p is the inpopurbanicity/tractpoptotal.
-    
-    # Define the buffers
-    radius_km <- swfscMisc::convert.distance(c(0.5, 1, 5, 10), from = c("mi"), to = c("km"))
-    radius_km*1000
-    
-    buffers <- st_transform(pharmgeo_df6, crs = 3857) #transform to a different projection that uses meters as unit of distance
-    buffers_0.5mi <- buffers %>% st_buffer(dist = 804.672) #804.672 is 0.5 mile in meters, as calculated in line above
-    buffers_1mi <- buffers %>% st_buffer(dist = 1609.344) #1609.34 is 1 mile in meters
-    buffers_5mi <- buffers %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
-    buffers_10mi <- buffers %>% st_buffer(dist = 16093.440) #10mi in meters
-   
-    groups_c <- tigris::block_groups(cb = TRUE, year = 2021) %>% filter(STATEFP %in% 53) #242298 ish? to 239380
-    # groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers2)) # make census block group polys are same crs as the buffer df
-    # identical(st_crs(groups_c_trans),st_crs(buffers2)) # checking, output is TRUE
-    # centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
-    # centroidsgroups$inbuffer_bin <- st_within(centroidsgroups, buffers2) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    
-    # Do this for each of the 4 radii
-    groups_c_trans <- st_transform(groups_c, crs = st_crs(buffers_1mi)) # make census block group polys are same crs as the buffer df
-    identical(st_crs(groups_c_trans),st_crs(buffers_1mi)) # checking, output is TRUE
-    centroidsgroups <- st_centroid(groups_c_trans) # create a df of the points that are the geometric centroids of each block group
-    centroidsgroups$inbuffer05_bin <- st_within(centroidsgroups, buffers_0.5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    centroidsgroups$inbuffer1_bin <- st_within(centroidsgroups, buffers_1mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    centroidsgroups$inbuffer5_bin <- st_within(centroidsgroups, buffers_5mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    centroidsgroups$inbuffer10_bin <- st_within(centroidsgroups, buffers_10mi) %>% lengths > 0 # define: is the blkgrp centroid in any buffer? Likely will have to do this in loops again
-    
-    groupspop_dec <- data.frame() # note the loop takes about 2 mins to run
-    for (state_i in mystates) {
-      # get the median incomes by tract in each state and store it in a temporary dataframe
-      groupspopdec_temp <- tidycensus::get_decennial(geography = "block group",                 # gets read in with a GEOID field, so can merge with pharmacy points here
-                                             variables = "P1_001N",           # total population
-                                             state = state_i,                     # list of all states
-                                             geometry = FALSE,                    # if false, doesnt read in geometry col with lat/long
-                                             output = "wide",                     # may need output = tidy if want to use ggplot for static maps later
-                                             year = 2020)
-      # bind the result of each iteration together as the consolidated output
-      groupspop_dec <-rbind(groupspop_dec,groupspopdec_temp)
-    }
-    groups_join <- full_join(groupspop_dec, as.data.frame(centroidsgroups), by = "GEOID") # drop ~400 of these bc they are block groups wiht no pop are 100% water
-    groups_join2 <- groups_join %>% rowwise() %>%
-        mutate(pop_total = P1_001N) %>%
-        filter(!is.na(pop_total)) %>%
-        ungroup() %>% as.data.frame() %>%
-        dplyr::select(GEOID, COUNTYFP, TRACTCE, BLKGRPCE, NAMELSAD, inbuffer05_bin, inbuffer1_bin, inbuffer5_bin, inbuffer10_bin, pop_total)
-    
-    # create column with population of each block that is in the buffer
-    groups_join2$inpop_05mi <- ifelse(groups_join2$inbuffer05_bin == TRUE, groups_join2$pop_total, 0)
-    groups_join2$inpop_1mi <- ifelse(groups_join2$inbuffer1_bin == TRUE, groups_join2$pop_total, 0)
-    groups_join2$inpop_5mi <- ifelse(groups_join2$inbuffer5_bin == TRUE, groups_join2$pop_total, 0)
-    groups_join2$inpop_10mi <- ifelse(groups_join2$inbuffer10_bin == TRUE, groups_join2$pop_total, 0)
-
-    # aggregate to the tract level and sum up populations
-    groups_join2$GEOID_tract <- substr(groups_join2$GEOID, 1, 11)
-    groups_join3 <- groups_join2 %>% group_by(GEOID_tract) %>%
-      summarise(inpop05_total = sum(inpop_05mi),
-                inpop1_total = sum(inpop_1mi),
-                inpop5_total = sum(inpop_5mi),
-                inpop10_total = sum(inpop_10mi)) %>%
-      select(GEOID_tract, inpop05_total, inpop1_total, inpop5_total, inpop10_total) %>% 
-      as.data.frame()
-    
-    datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") %>% 
-      filter(is.na()) %>% 
-      as.data.frame()
     
     # create final variables for low-access
     datafull$inpop_urbanicity <- ifelse(datafull$accessradius %in% 0.5, datafull$inpop05_total,
@@ -985,17 +925,8 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     datafull$adultpop_lowaccess <- ifelse(datafull$low_access_bin%in%1, datafull$decpop_adult_n, 0)
     datafull$pop65_lowaccess <- ifelse(datafull$low_access_bin%in%1, datafull$decpop_65up_n, 0)
     
-    # datafull$urbanicity <- ifelse(datafull$accessradius == 10, 3,
-    #                               ifelse(datafull$accessradius == 5, 2,
-    #                                      ifelse(datafull$accessradius %in% c(0.5,1), 1, NA)))
-    
-    table(datafull$urbanicity, datafull$accessradius, useNA = "always")
-    # # REMOVE ONCE WERE SET HERE
-    # # Check NAs of pharmacy deserts:
-    # saveRDS(datafull, file = "datafull_line864.rds")
-    # table(datafull$pharmacydesert_bin, useNA = "always") # there are 105 NAs
-    #   # all of these have NA for low income, so not able to make a determination. There are 1010 total tracts that have NA for low income, 811 of these have no population, the remaining 199 have populatoin but have no median income or FPL data available.
-    write.csv(datafull, "datafull_newradius929.csv") # dont forget to pad zeroes on GEOID if we need to read this in.
+    saveRDS(datafull, file = "datafull_Oct1.rds")
+
 
 # Add labels to the dataset variables
     label(datafull$pop_total) <- "Total Population"
@@ -1023,12 +954,12 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     label(datafull$disability_p) <- "Prop. Ambulatory Disability"
     label(datafull$inequality_gini) <- "GINI Inequality Index"
     label(datafull$pop_density) <- "Population Density"
-    datafull$urbanicity_cat <- factor(datafull$urbanicity,
-                                             levels = c(1,2,3),
-                                             labels = c("Urban",
-                                                        "Suburban",
-                                                        "Rural"))
-    label(datafull$urbanicity_cat) <- "Urbanicity"
+    # datafull$urbanicity_cat <- factor(datafull$urbanicity,
+    #                                          levels = c(1,2,3),
+    #                                          labels = c("Urban",
+    #                                                     "Suburban",
+    #                                                     "Rural"))
+    label(datafull$urbanicity) <- "Urbanicity"
     # datafull$pharmacydesert_bin <- factor(datafull$pharmacydesert_bin,
     #                                            levels = c(1,0), # NEED TO CHECK HERE- there should be some PDs that are NA?
     #                                            labels = c("Pharmacy Desert",
@@ -1061,10 +992,8 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     tractdata_df <- datafull %>% as.data.frame()
     tractdata_sf <- merge(tract_polygons2, (as.data.frame(datafull)))
     
-    saveRDS(tractdata_df, file = "tractdata_929_df.rds")
-    saveRDS(tractdata_sf, file = "tractdata_929_sf.rds")
-    
-    # write.csv(tractdata_df, "tractdatadftest.csv")
+    saveRDS(tractdata_df, file = "tractdata_Oct1_df.rds")
+    saveRDS(tractdata_sf, file = "tractdata_Oct1_sf.rds")
     
 ## Final saving of pharmacies data ####    
   # Pharmacies dataset: row = pharmacy but do a  join and add indicator of urbanicity and the pharmacy desert status of that pharmacy
