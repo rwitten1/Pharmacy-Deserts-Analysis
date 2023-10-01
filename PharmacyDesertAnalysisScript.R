@@ -52,7 +52,7 @@
   # register_google(key = "AIzaSyCHb9LTmOgEswBpLGgEt594kIua5NQLxKo", write = TRUE)
 
 # Set working drive and files
-  # test tests
+  # personal computer directory
   rootDir <- "~/OneDrive/Documents/School Stuff/Dissertation/Pharmacy-Deserts-Analysis/"
   inputDir <- paste0(rootDir, "Input/")
   outputDir <- paste0(rootDir, "Output/")
@@ -60,6 +60,11 @@
   # shapefilesDir <- paste0(rootDir, "shapefiles/")
   setwd(rootDir)
   # tigris_cache_dir(shapefilesDir)
+  
+  # remote desktop directory
+  rootDir <- "\\\\udrive.uw.edu/udrive/rwitten1/Documents/GitHub/Pharmacy-Deserts-Analysis"
+  inputDir <- paste0(rootDir, "Input/")
+  pharmgeo_df6 <- readRDS("pharmgeo_df6.rds") # skip down to read the blocks in
 
 # Load files needed:
 # NCPDP files: provider info and services
@@ -737,48 +742,65 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
   radius_km*1000
   
   buffers <- st_transform(pharmgeo_df6, crs = 3857) #transform to a different projection that uses meters as unit of distance
-  buffers_0.5mi <- buffers %>% filter(accessradius == 0.5) %>% st_buffer(dist = 804.672) #804.672 is 0.5 mile in meters, as calculated in line 500 above
-  buffers_1mi <- buffers %>% filter(accessradius == 1) %>% st_buffer(dist = 1609.344) #1609.34 is 1 mile in meters
-  buffers_5mi <- buffers %>% filter(accessradius == 5) %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
-  buffers_10mi <- buffers %>% filter(accessradius == 10) %>% st_buffer(dist = 16093.440) #10mi in meters
-  buffers2 <- rbind(buffers_0.5mi, buffers_1mi, buffers_5mi, buffers_10mi)
-  buffers2 <- st_transform(buffers2, crs = 4326) # transform back to wsg84 / google maps version to use with leaflet
-  saveRDS(buffers2, file = "buffers2.rds")
+  buffers_0.5mi <- buffers %>% st_buffer(dist = 804.672) #804.672 is 0.5 mile in meters, as calculated in line 500 above
+  buffers_1mi <- buffers %>% st_buffer(dist = 1609.344) #1609.34 is 1 mile in meters
+  buffers_5mi <- buffers %>% st_buffer(dist = 8046.720) #8046.720 is 5 miles in meters
+  buffers_10mi <- buffers %>% st_buffer(dist = 16093.440) #10mi in meters
+  
+  # transform back to wsg84 / google maps version to use with leaflet
+  buffers05mi_2 <- st_transform(buffers_0.5mi, crs = 4326)
+  buffers1mi_2 <- st_transform(buffers_1mi, crs = 4326) 
+  buffers5mi_2 <- st_transform(buffers_5mi, crs = 4326)
+  buffers10mi_2 <- st_transform(buffers_10mi, crs = 4326)
   
   # calculate proportion in radius with blocks instead of block groups for more geographic granularity
-  # Error with maryland (24) and new york (36) for some reason- try again later and rbind it to centroidsblocks_1_23, centroidsblocks 25_35
-  # For now, skipping and trying 25 - 56.
-  # mystates1_23 <- c("1","2","3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23")
-  # mystates25_356 <- c("25","26","27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56")
-  # mystates41_56 <- c("41", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56")
-  mystatesmissing_4042 <- c("40", "42")
+  # get ploygons of blocks and identify their centroids (takes ~1 day to run)
   blocks_c <- data.frame()
   centroidsblocks <- data.frame()
-  for (state_i in mystatesmissing_4042) {
+  # goal of this is evaluate whether the centroid of the block is within the buffer radius
+  # let's start with buffer 1
+  for (state_i in mystates) {
     blocks_temp <- tigris::blocks(year = 2020,
-                                 state = 42)  
-    blocks_trans <- st_transform(blocks_temp, crs = st_crs(buffers2))
+                                 state = state_i)  
+    blocks_trans <- st_transform(blocks_temp, crs = st_crs(buffers1mi_2)) # put the blocks into the google crs
     centroidsblocks_temp <- st_centroid(blocks_trans)
     centroidsblocks <- rbind(centroidsblocks, centroidsblocks_temp)
     blocks_c <- data.frame()
   }
-
-  # centroidsblocks_1_39 <- centroidsblocks
-  # centroidsblocks_41_56 <- centroidsblocks
-  # centroidsblocks_40 <- centroidsblocks
-  centroidsblocks_42 <- centroidsblocks_temp
-
-  # # original steps
-  # blocks_c_trans <- st_transform(blocks_c, crs = st_crs(buffers2)) # make census block group polys are same crs as the buffer df
-  # identical(st_crs(blocks_c_trans),st_crs(buffers2)) # output is TRUE
-  # centroidsblocks <- st_centroid(blocks_c_trans) # create a df of the points that are the centroids of each block
-  # centroidsblocks$inbuffer_bin <- st_within(centroidsblocks, buffers2) %>% lengths > 0 # define: is the block centroid in any buffer? Likely will have to do this in loops again
-
-  # run to create column for whether is in any of the buffers
-  centroidsblocks_1_39$inbuffer_bin <- st_within(centroidsblocks_1_39, buffers2) %>% lengths > 0 #took 90mins
-  centroidsblocks_41_56$inbuffer_bin <- st_within(centroidsblocks_41_56, buffers2) %>% lengths > 0 
-  centroidsblocks_40$inbuffer_bin <- st_within(centroidsblocks_40, buffers2) %>% lengths > 0 
-  centroidsblocks_42$inbuffer_bin <- st_within(centroidsblocks_42, buffers2) %>% lengths > 0 
+  
+  # create column for whether the block centroid is within the radius (of each size) of the pharmacies
+    # check that they are using the same crs (doesnt matter which crs)
+    identical(st_crs(centroidsblocks), st_crs(buffers1mi_2)) #output is TRUE
+  centroidsblocks$inbuffer05_bin <- st_within(centroidsblocks, buffers05mi_2) %>% lengths > 0 # define: is the block centroid in any buffer? Likely will have to do this in loops again
+  centroidsblocks$inbuffer1_bin <- st_within(centroidsblocks, buffers1mi_2) %>% lengths > 0
+  centroidsblocks$inbuffer5_bin <- st_within(centroidsblocks, buffers5mi_2) %>% lengths > 0
+  centroidsblocks$inbuffer10_bin <- st_within(centroidsblocks, buffers10mi_2) %>% lengths > 0
+  
+  # drop the extraneous cols including st_drop_geometry(centroidsblocks_1_39_tract) %>% as.data.frame()
+  centroidsblocks2 <- centroidsblocks %>% st_drop_geometry() %>% dplyr::select(GEOID20, POP20, inbuffer05_bin, inbuffer1_bin, inbuffer5_bin, inbuffer10_bin)
+  
+  # add column for the appropriate population
+  # create column with population of each block that is in the buffer
+  centroidsblocks2$inpop_05mi <- ifelse(centroidsblocks2$inbuffer05_bin == TRUE, centroidsblocks2$POP20, 0)
+  centroidsblocks2$inpop_1mi <- ifelse(centroidsblocks2$inbuffer1_bin == TRUE, centroidsblocks2$POP20, 0)
+  centroidsblocks2$inpop_5mi <- ifelse(centroidsblocks2$inbuffer5_bin == TRUE, centroidsblocks2$POP20, 0)
+  centroidsblocks2$inpop_10mi <- ifelse(centroidsblocks2$inbuffer10_bin == TRUE, centroidsblocks2$POP20, 0)
+  
+  # aggregate to the tract level and sum up populations
+  centroidsblocks2$GEOID_tract <- substr(centroidsblocks2$GEOID20, 1, 11)
+  centroidsblocks3 <- centroidsblocks2 %>% group_by(GEOID_tract) %>%
+    summarise(inpop05_total = sum(inpop_05mi),
+              inpop1_total = sum(inpop_1mi),
+              inpop5_total = sum(inpop_5mi),
+              inpop10_total = sum(inpop_10mi)) %>%
+    select(GEOID_tract, inpop05_total, inpop1_total, inpop5_total, inpop10_total) %>% 
+    as.data.frame()
+  saveRDS(centroidsblocks3, file = "centroidsblocks3bufferpops.rds")
+  # SAVE AT THIS POINTS LEAVING THE REMOTE DESKTOP and go back to regulary computer and read in centroidsblocks3s
+  
+  datafull <- full_join(censusdata6, groups_join3, by = "GEOID_tract") %>% 
+    filter(is.na()) %>% 
+    as.data.frame()
 
     # rename to blocks_join. column for the population of each block group whose centroid is in a pharmacy buffer:
     colnames(centroidsblocks_1_39)
