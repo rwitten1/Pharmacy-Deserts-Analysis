@@ -997,10 +997,12 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
     
 ## Final saving of pharmacies data ####    
   # Pharmacies dataset: row = pharmacy but do a  join and add indicator of urbanicity and the pharmacy desert status of that pharmacy
-  pdbin_df <- datafull %>% select(GEOID_tract, pharmacydesert_bin) %>% rename(GEOID = GEOID_tract) 
+  pdbin_df <- datafull %>% select(GEOID_tract, pharmacydesert_bin, pharmacydesert_cat) %>% rename(GEOID = GEOID_tract) 
     # NEW STEP HERE save it EXCEPT drop the ones which is.na(urbanicity). werent able to be geocoded
-  pharmgeo_df7_df <- left_join(pharmgeo_df5, pdbin_df, by = "GEOID") # merge PD status with the df pharmacies
-  pharmgeo_df7_sf <- left_join(pharmgeo_df6, pdbin_df, by = "GEOID") # merge PD status with the sf pharmacies (WGS 84, 4326)
+  pharmgeo_df7_df <- left_join(pharmgeo_df5, pdbin_df, by = "GEOID") %>%  # merge PD status with the df pharmacies
+    filter(!is.na(urbanicity)) # remove the 26 that weren't able to be geocoded
+  pharmgeo_df7_sf <- left_join(pharmgeo_df6, pdbin_df, by = "GEOID") %>%  # merge PD status with the sf pharmacies (WGS 84, 4326)
+    filter(!is.na(urbanicity)) # remove the 26 that weren't able to be geocoded
 
   # Add labels to pharmacy dataset columns
   label(pharmgeo_df7_df$addresses) <- "Address"
@@ -1034,16 +1036,16 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
   label(pharmgeo_df7_df$is340b_bin) <- "340b Status (Binary)"
   label(pharmgeo_df7_df$is340b_cat) <- "340b Status Category"
   label(pharmgeo_df7_df$urbanicity) <- "Urbanicity"
-  pharmgeo_df7_df$urbanicity_cat <- factor(pharmgeo_df7_df$urbanicity,
-                                           levels = c(1,2,3),
-                                           labels = c("Urban",
-                                                      "Suburban",
-                                                      "Rural"))
+  # pharmgeo_df7_df$urbanicity_cat <- factor(pharmgeo_df7_df$urbanicity,
+  #                                          levels = c(1,2,3),
+  #                                          labels = c("Urban",
+  #                                                     "Suburban",
+  #                                                     "Rural"))
   label(pharmgeo_df7_df$pharmacydesert_bin) <- "Pharmacy Desert Status"
-  pharmgeo_df7_df$pharmacydesert_bin <- factor(pharmgeo_df7_df$pharmacydesert_bin,
-                                                levels = c(1,0),
-                                                labels = c("Pharmacy Desert",
-                                                           "Not Pharmacy Desert"))
+  # pharmgeo_df7_df$pharmacydesert_bin <- factor(pharmgeo_df7_df$pharmacydesert_bin,
+  #                                               levels = c(1,0),
+  #                                               labels = c("Pharmacy Desert",
+  #                                                          "Not Pharmacy Desert"))
   
   # save one version as a data frame and one version as a geo. Same w pharmacy dataframe
   saveRDS(pharmgeo_df7_df, file = "pharmacies_df.rds") # non-geo dataframe for analysis
@@ -1056,6 +1058,21 @@ saveRDS(censusdata2, "censusdata2_line566.rds")
 # 88888888888888888888888888888888888888888888888888888888888888888
 
 tractdata_df2 <- tractdata_df %>% filter(pharmacydesert_cat %in% c(1,0))
+  
+# Upfront summary numbers:
+  # total population living in pharmacy deserts:
+  sum(tractdata_df$totalpop_phdesert) #total
+  sum(tractdata_df$adultpop_phdesert) #adult
+  # proportion of total population in sample: 
+  sum(tractdata_df$totalpop_phdesert)/sum(tractdata_df$decpop_total_n) #total
+  sum(tractdata_df$adultpop_phdesert)/sum(tractdata_df$decpop_adult_n) #adult
+  # table of pds
+  table(tractdata_df$pharmacydesert_cat)
+  
+  # average number of pharmacies in a tract
+  boxplot(tractdata_df2$ph_per_tract[tractdata_df2$pharmacydesert_cat %in% 1])
+  summary(tractdata_df2$ph_per_tract[tractdata_df2$pharmacydesert_cat %in% 1])
+
 
 # Table 0: Characteristics of sample
 table1::table1(~ pop_adult | urbanicity_cat, data = tractdata_df)
@@ -1083,7 +1100,7 @@ table1 <- tractdata_df2 %>% group_by(state_fips) %>%
          Number_Census_Tracts = n_tracts,
          Number_Pharmacy_Desert_Tracts = n_phdeserts)
 View(table1)
-write.csv(table1, "table1.csv")
+write.csv(table1, "table1wblocks.csv")
 
 # Table 2: Characteristics of pharmacy desert neighborhoods
 tractdata_df2$pharmacydesert_bin2 <- factor(tractdata_df2$pharmacydesert_bin,
@@ -1312,6 +1329,57 @@ pharmacydesertmapWA <- leaflet(width = "100%") %>%                     # sets th
             colors = c("lightgrey", "salmon"), opacity = 0.7,
             labels = c("Low Access (But not Low Income)", "Pharmacy Desert"))
 pharmacydesertmapWA
+
+
+## pharmacy desert map for the whole country
+popup2 <- paste0(str_extract(tractdata_sf$tract_name, "^([^,]*)"))
+pharmacydesertmapUSA <- leaflet(width = "100%") %>%                     # sets the width of the map     
+  addProviderTiles(providers$CartoDB.Positron) %>%        
+  addPolygons(data = states_c %>% 
+                st_transform(crs = "+proj=longlat +datum=WGS84"),
+              fillOpacity = 0,
+              stroke = TRUE,
+              color = "black",
+              weight = 1.5) %>% 
+  addPolygons(data = counties_c %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84"), # put my data on WSG84 CRS for mapping in open street maps
+              fillOpacity = 0,
+              stroke = TRUE,
+              color = "black",
+              weight = 1) %>% 
+  addPolygons(data = tract_c %>%
+                st_transform(crs = "+proj=longlat +datum=WGS84"),
+              fillOpacity = 0,
+              stroke = TRUE,
+              color = "black",
+              weight = 0.5) %>%
+  addPolygons(data = tractdata_sf %>% filter(low_access_bin == 1), # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+              popup = popup2,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.3, 
+              color = "lightgrey") %>% 
+  addPolygons(data = tractdata_sf %>% filter(pharmacydesert_bin == 1), # change mydata from NAD83 to WSG84 for mapping in OpenStreetMaps
+              popup = popup2,
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.5, 
+              color = "salmon") %>% 
+  addCircleMarkers(data = pharmgeo_df7_sf$geometry, # is already in WSG84
+                   fillColor = "springgreen3",
+                   radius = 3,
+                   color = "black",
+                   weight = 0.1,
+                   fillOpacity = 1,
+                   popup = paste0(pharmgeo_df7_sf_state$legal_name, 
+                                  " (NCPDP ID: ", 
+                                  pharmgeo_df7_sf$ncpdp_id, ")")) %>% 
+  addLegend(position = "bottomright",
+            colors = c("lightgrey", "salmon"), opacity = 0.7,
+            labels = c("Low Access (But not Low Income)", "Pharmacy Desert"))
+pharmacydesertmapUSA
+saveWidget(pharmacydesertmapUSA, file = "pharmacydesertmapUSA.html", selfcontained = TRUE)
+
 
 # investigating the two in the sodo industrial area:
 # METHODIST HOSPITAL (NCPDP ID: 5930284)
