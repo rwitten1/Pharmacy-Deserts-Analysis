@@ -831,7 +831,7 @@ censusdata2 <- dplyr::full_join(censusdata2, decennialpop_tract2, by = "GEOID")
     saveRDS(tractdata_df, file = "tractdata_Oct30_df.rds")
     saveRDS(tractdata_sf, file = "tractdata_Oct30_sf.rds")
     
-    save(tractdata_df, file = "tractdata_Oct30_df.rda") # need to save as RDA to be read by Tableau, otherwise use RDS
+    save(tractdata_df, file = "tractdata_Oct30_df.rda") 
 
     
 ## Final saving of pharmacies data ####    
@@ -968,6 +968,22 @@ pvalues_tracts <- c(1e-20,1e-20,1e-20,1e-20,1e-20,
                     1e-20)
 pvalues_tracts_corrected <- p.adjust(pvalues_tracts,method="BH") %>% format.pval(., digits=3, eps=0.001)
 
+# Table 2.1 Supplemental
+tractdata_df3 <- tractdata_df2 %>% filter(low_access_bin != "NA: Zero Population")
+tractdata_df3$low_access_bin2 <- factor(tractdata_df3$low_access_bin,
+                                            levels = c(1,0), 
+                                            labels = c("Low Access",
+                                                       "Not Low Access"))
+table1::table1(~ fpl_p + median_income + educ_hs_p + ins_none_p + ins_public_p + 
+                 urbanicity + ph_per_tract_cat +
+                 notenglspeak_p + disability_p + pop_65up_p +
+                 race_nh_white_p + race_nh_black_p + race_nh_asian_p + race_nh_aian_p + race_nh_2p_p + race_nh_other_p +
+                 race_hisp_white_p + race_hisp_black_p + race_hisp_asian_p + race_hisp_aian_p + race_hisp_2p_p + race_hisp_other_p
+               | low_access_bin2, 
+               data = tractdata_df3,
+               overall = F,
+               extra.col=list(`P-value`=pvalue))
+
 
 # Table 2.Y: Characteristics of pharmacy desert neighborhoods urban vs rural
 tractdata_df2$pharmacydesert_bin2 <- factor(tractdata_df2$pharmacydesert_bin,
@@ -1034,3 +1050,18 @@ table1::table1(~ urbanicity + dispenserclass_cat +
                extra.col=list(`P-value`=pvaluelong))
 pvalues_pharms <- c(1e-20,8.834534612e-07,0.02256227407,1,0.04824457992,0.5523668861,1.756103965e-06,0.2605264328,0.2154980325)
 pvalues_pharms_corrected <- p.adjust(pvalues_pharms,method="BH") %>% format.pval(., digits=3, eps=0.001)
+
+pvalue <- function(x,...) {
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # for numeric variables, perform t test
+    p <- t.test(y~g)$p.value
+  } else {
+    # for categorical, do chi-squared test
+    p <- chisq.test(table(y,g))$p.value
+  }
+  # Format the p value 
+  # The initial empty string places the output on the line below the variable label
+  c("", sub("<", "&lt;",format.pval(p, digits=3, eps=0.001))) # removed the format argument as a test to get actual p value, bring up from below
+}
